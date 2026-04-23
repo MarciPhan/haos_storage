@@ -41,6 +41,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Register the custom panel in the sidebar
     hass.components.frontend.async_register_panel(
+        hass,
         component_name="custom",
         sidebar_title="Knihovnička",
         sidebar_icon="mdi:bookshelf",
