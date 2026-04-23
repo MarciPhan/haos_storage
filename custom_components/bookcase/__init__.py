@@ -1,4 +1,5 @@
 import logging
+import os
 import uuid
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers.typing import ConfigType
@@ -12,17 +13,28 @@ from .api import fetch_book_metadata
 _LOGGER = logging.getLogger(__name__)
 
 PANEL_URL = "bookcase"
+# Resolve www directory relative to this file – works on all platforms
+WWW_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "www")
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up the Bookcase integration."""
     # Register static path for panel assets
+    _LOGGER.debug("Bookcase: registering static path from %s", WWW_DIR)
     try:
+        # HA 2024.7+
         from homeassistant.components.http import StaticPath
         await hass.http.async_register_static_paths([
-            StaticPath("/bookcase_static", hass.config.path("custom_components/bookcase/www"), False)
+            StaticPath("/bookcase_static", WWW_DIR, False)
         ])
-        _LOGGER.info("Bookcase: static path registered")
+        _LOGGER.info("Bookcase: static path registered (async)")
+    except (ImportError, AttributeError):
+        # Fallback for older HA versions
+        try:
+            hass.http.register_static_path("/bookcase_static", WWW_DIR, False)
+            _LOGGER.info("Bookcase: static path registered (sync fallback)")
+        except Exception as err:
+            _LOGGER.error("Bookcase: failed to register static path: %s", err)
     except Exception as err:
         _LOGGER.error("Bookcase: failed to register static path: %s", err)
 
