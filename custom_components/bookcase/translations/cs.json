@@ -1,0 +1,14 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Nastavení Knihovničky",
+        "description": "Chcete aktivovat integraci pro správu osobní knihovny?"
+      }
+    },
+    "abort": {
+      "already_configured": "Knihovnička je již nastavena."
+    }
+  },
+  "title": "Knihovnička"
+}

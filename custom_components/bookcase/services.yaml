@@ -1,0 +1,41 @@
+add_by_isbn:
+  name: Přidat knihu podle ISBN
+  description: Vyhledá metadata knihy v Open Library a přidá ji do knihovničky.
+  fields:
+    isbn:
+      name: ISBN
+      description: ISBN kód knihy (10 nebo 13 číslic).
+      required: true
+      example: "9788025712345"
+
+update_book:
+  name: Aktualizovat knihu
+  description: Změní stav, hodnocení nebo poznámky u existující knihy.
+  fields:
+    book_id:
+      name: ID knihy
+      description: Interní ID knihy.
+      required: true
+    status:
+      name: Stav
+      description: "Možnosti: to_read, reading, read"
+      example: "read"
+    rating:
+      name: Hodnocení
+      description: Počet hvězdiček (0-5).
+      example: 5
+    notes:
+      name: Poznámky
+      description: Textová poznámka ke knize.
+    lent_to:
+      name: Půjčeno komu
+      description: Jméno osoby, které byla kniha půjčena.
+
+delete_book:
+  name: Smazat knihu
+  description: Odstraní knihu z knihovničky.
+  fields:
+    book_id:
+      name: ID knihy
+      description: Interní ID knihy.
+      required: true
