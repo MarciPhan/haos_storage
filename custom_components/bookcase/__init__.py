@@ -12,7 +12,34 @@ from .api import fetch_book_metadata
 _LOGGER = logging.getLogger(__name__)
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """Set up the Bookcase integration via YAML (not recommended but for legacy support)."""
+    """Set up the Bookcase integration."""
+    # 1. Register static path
+    try:
+        from homeassistant.components.http import StaticPath
+        await hass.http.async_register_static_paths([
+            StaticPath("/bookcase_static", hass.config.path("custom_components/bookcase/www"), False)
+        ])
+        _LOGGER.info("Bookcase static path registered globally")
+    except Exception as err:
+        _LOGGER.error("Failed to register Bookcase static path: %s", err)
+
+    # 2. Register panel
+    try:
+        hass.components.frontend.async_register_panel(
+            hass,
+            component_name="custom",
+            sidebar_title="Knihovnička",
+            sidebar_icon="mdi:bookshelf",
+            frontend_url_path="bookcase",
+            config={
+                "url": "/bookcase_static/panel.js",
+            },
+            require_admin=False
+        )
+        _LOGGER.info("Bookcase panel registration command sent globally")
+    except Exception as err:
+        _LOGGER.error("Failed to register Bookcase panel: %s", err)
+
     return True
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -32,33 +59,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "store": store,
         "books": data["books"]
     }
-
-    # 1. Register static path
-    try:
-        from homeassistant.components.http import StaticPath
-        await hass.http.async_register_static_paths([
-            StaticPath("/bookcase_static", hass.config.path("custom_components/bookcase/www"), False)
-        ])
-        _LOGGER.info("Bookcase static path registered")
-    except Exception as err:
-        _LOGGER.error("Failed to register Bookcase static path: %s", err)
-
-    # 2. Register panel
-    try:
-        hass.components.frontend.async_register_panel(
-            hass,
-            component_name="custom",
-            sidebar_title="Knihovnička",
-            sidebar_icon="mdi:bookshelf",
-            frontend_url_path="bookcase",
-            config={
-                "url": "/bookcase_static/panel.js",
-            },
-            require_admin=False
-        )
-        _LOGGER.info("Bookcase panel registration command sent")
-    except Exception as err:
-        _LOGGER.error("Failed to register Bookcase panel: %s", err)
 
     # Register services
     async def handle_add_book(call: ServiceCall):
