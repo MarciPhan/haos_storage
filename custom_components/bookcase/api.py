@@ -4,37 +4,79 @@ import logging
 _LOGGER = logging.getLogger(__name__)
 
 async def fetch_book_metadata(isbn: str):
-    """Fetch book metadata from Open Library API."""
-    url = f"https://openlibrary.org/api/books?bibkeys=ISBN:{isbn}&format=json&jscmd=data"
-    
+    """Fetch book metadata from multiple sources (Open Library, Google Books, Knihovny.cz)."""
     async with aiohttp.ClientSession() as session:
+        # 1. Try Open Library
+        ol_url = f"https://openlibrary.org/api/books?bibkeys=ISBN:{isbn}&format=json&jscmd=data"
         try:
-            async with session.get(url, timeout=10) as response:
-                if response.status != 200:
-                    _LOGGER.error("Error fetching book metadata: %s", response.status)
-                    return None
-                
-                data = await response.json()
-                key = f"ISBN:{isbn}"
-                
-                if key not in data:
-                    _LOGGER.warning("Book with ISBN %s not found in Open Library", isbn)
-                    return None
-                
-                book_info = data[key]
-                return {
-                    "isbn": isbn,
-                    "title": book_info.get("title", "Unknown Title"),
-                    "subtitle": book_info.get("subtitle"),
-                    "authors": [author.get("name") for author in book_info.get("authors", [])],
-                    "publishers": [pub.get("name") for pub in book_info.get("publishers", [])],
-                    "publish_date": book_info.get("publish_date"),
-                    "languages": [lang.get("name") for lang in book_info.get("languages", [])],
-                    "cover_url": book_info.get("cover", {}).get("large"),
-                    "pages": book_info.get("number_of_pages"),
-                    "url": book_info.get("url"),
-                    "subjects": [sub.get("name") for sub in book_info.get("subjects", [])[:5]]  # Limit to 5 genres
-                }
-        except Exception as e:
-            _LOGGER.error("Exception while fetching book metadata: %s", e)
-            return None
+            async with session.get(ol_url, timeout=5) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    key = f"ISBN:{isbn}"
+                    if key in data:
+                        _LOGGER.info("Book found in Open Library")
+                        b = data[key]
+                        return {
+                            "isbn": isbn,
+                            "title": b.get("title", "Unknown"),
+                            "subtitle": b.get("subtitle"),
+                            "authors": [a.get("name") for a in b.get("authors", [])],
+                            "publishers": [p.get("name") for p in b.get("publishers", [])],
+                            "publish_date": b.get("publish_date"),
+                            "languages": [l.get("name") for l in b.get("languages", [])],
+                            "cover_url": b.get("cover", {}).get("large"),
+                            "pages": b.get("number_of_pages"),
+                            "url": b.get("url"),
+                            "subjects": [s.get("name") for s in b.get("subjects", [])[:5]]
+                        }
+        except Exception: pass
+
+        # 2. Try Google Books
+        gb_url = f"https://www.googleapis.com/books/v1/volumes?q=isbn:{isbn}"
+        try:
+            async with session.get(gb_url, timeout=5) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    if data.get("totalItems", 0) > 0:
+                        _LOGGER.info("Book found in Google Books")
+                        i = data["items"][0]["volumeInfo"]
+                        return {
+                            "isbn": isbn,
+                            "title": i.get("title", "Unknown"),
+                            "subtitle": i.get("subtitle"),
+                            "authors": i.get("authors", ["Neznámý autor"]),
+                            "publishers": [i.get("publisher")] if i.get("publisher") else [],
+                            "publish_date": i.get("publishedDate"),
+                            "languages": [i.get("language")],
+                            "cover_url": i.get("imageLinks", {}).get("thumbnail"),
+                            "pages": i.get("pageCount"),
+                            "url": i.get("infoLink"),
+                            "subjects": i.get("categories", [])
+                        }
+        except Exception: pass
+
+        # 3. Try Knihovny.cz (Great for Czech books)
+        kn_url = f"https://www.knihovny.cz/api/v1/search?q=isbn:{isbn}"
+        try:
+            async with session.get(kn_url, timeout=5) as response:
+                if response.status == 200:
+                    data = await response.json()
+                    if data.get("resultCount", 0) > 0:
+                        _LOGGER.info("Book found in Knihovny.cz")
+                        r = data["records"][0]
+                        return {
+                            "isbn": isbn,
+                            "title": r.get("title", "Unknown"),
+                            "authors": list(r.get("authors", {}).get("primary", {}).keys()),
+                            "publishers": list(r.get("authors", {}).get("secondary", {}).keys()),
+                            "publish_date": r.get("publicationDate"),
+                            "languages": r.get("languages", []),
+                            "cover_url": f"https://www.knihovny.cz/Cover/Show?id={r.get('id')}&size=large",
+                            "pages": None,
+                            "url": f"https://www.knihovny.cz/Record/{r.get('id')}",
+                            "subjects": [s[0] for s in r.get("subjects", [])[:5]]
+                        }
+        except Exception: pass
+
+    _LOGGER.warning("Book with ISBN %s not found in any database", isbn)
+    return None

@@ -33,6 +33,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "books": data["books"]
     }
 
+    # Register static path for the panel
+    hass.http.register_static_path(
+        "/bookcase_static",
+        hass.config.path("custom_components/bookcase/www"),
+    )
+
+    # Register the custom panel in the sidebar
+    hass.components.frontend.async_register_panel(
+        component_name="custom",
+        sidebar_title="Knihovnička",
+        sidebar_icon="mdi:bookshelf",
+        frontend_url_path="bookcase",
+        config={
+            "_type": "module",
+            "url": "/bookcase_static/panel.js",
+        },
+        require_admin=False
+    )
+
     # Register services
     async def handle_add_book(call: ServiceCall):
         isbn = call.data.get("isbn")
