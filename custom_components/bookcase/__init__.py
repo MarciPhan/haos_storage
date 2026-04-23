@@ -61,7 +61,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 webcomponent_name="bookcase-panel",
                 sidebar_title="Knihovnička",
                 sidebar_icon="mdi:bookshelf",
-                module_url="/bookcase_static/panel.js",
+                module_url="/bookcase_static/panel.js?v=2.1",
                 require_admin=False,
             )
             _LOGGER.info("Bookcase: sidebar panel registered")
@@ -128,17 +128,33 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         hass.bus.async_fire("bookcase_updated")
 
     async def handle_update_book(call: ServiceCall):
-        book_id = call.data.get("book_id")
-        if book_id not in data["books"]:
-            _LOGGER.error("Book ID not found: %s", book_id)
-            return
-
+        old_lent_to = data["books"][book_id].get("lent_to")
         updates = {}
         for key in ["status", "is_read", "date_read", "rating", "notes", "lent_to", "count", "genre"]:
             if key in call.data:
                 updates[key] = call.data[key]
 
         data["books"][book_id].update(updates)
+        new_lent_to = data["books"][book_id].get("lent_to")
+
+        # Google Calendar Integration
+        if new_lent_to and new_lent_to != old_lent_to:
+            try:
+                book_title = data["books"][book_id].get("title", "Kniha")
+                await hass.services.async_call(
+                    "google", "create_event",
+                    {
+                        "entity_id": "calendar.primary", # Assuming primary, can be adjusted
+                        "summary": f"Půjčeno: {book_title} -> {new_lent_to}",
+                        "description": f"Kniha {book_title} byla půjčena osobě: {new_lent_to}",
+                        "start_date_time": dt_util.now().isoformat(),
+                        "end_date_time": (dt_util.now() + dt_util.timedelta(days=30)).isoformat(),
+                    }
+                )
+                _LOGGER.info("Google Calendar event created for book: %s", book_title)
+            except Exception as e:
+                _LOGGER.error("Failed to create Google Calendar event: %s", e)
+
         await store.async_save(data)
         hass.data[DOMAIN][entry.entry_id]["books"] = data["books"]
         hass.bus.async_fire("bookcase_updated")

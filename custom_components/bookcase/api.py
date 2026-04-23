@@ -40,6 +40,9 @@ async def fetch_book_metadata(isbn: str):
                     if data.get("totalItems", 0) > 0:
                         _LOGGER.info("Book found in Google Books")
                         i = data["items"][0]["volumeInfo"]
+                        cover_url = i.get("imageLinks", {}).get("thumbnail")
+                        if cover_url and cover_url.startswith("http://"):
+                            cover_url = cover_url.replace("http://", "https://")
                         return {
                             "isbn": isbn,
                             "title": i.get("title", "Unknown"),
@@ -48,7 +51,7 @@ async def fetch_book_metadata(isbn: str):
                             "publishers": [i.get("publisher")] if i.get("publisher") else [],
                             "publish_date": i.get("publishedDate"),
                             "languages": [i.get("language")],
-                            "cover_url": i.get("imageLinks", {}).get("thumbnail"),
+                            "cover_url": cover_url,
                             "pages": i.get("pageCount"),
                             "url": i.get("infoLink"),
                             "subjects": i.get("categories", [])
