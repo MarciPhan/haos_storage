@@ -1072,7 +1072,6 @@ class BookcasePanel extends HTMLElement {
     if (conditionSelect) {
       conditionSelect.onchange = () => this.saveBook(book.id);
     }
-  }
 
     // Vráceno button – optimistic UI
     const returnBtn = body.querySelector('#btn-return');
