@@ -13,7 +13,7 @@ _LOGGER = logging.getLogger(__name__)
 
 class BookcaseCoverView(HomeAssistantView):
     """View to serve and cache book covers."""
-    url = "/bookcase_static/covers/{book_id}.jpg"
+    url = "/bookcase_covers/{book_id}.jpg"
     name = "api:bookcase:cover"
     requires_auth = False # Veřejně dostupné pro panel
 
@@ -291,17 +291,13 @@ async def async_setup_entry(hass: HomeAssistant, entry):
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = {"books": data["books"]}
     
-    # Registrace statických souborů (JS, obrázky)
-    www_path = os.path.join(os.path.dirname(__file__), "www")
-    if not os.path.exists(www_path):
-        _LOGGER.error("Bookcase: WWW directory not found at %s", www_path)
-    
+    # Registrace statických souborů (JS, obrázky) - používáme unikátní prefix
+    www_path = hass.config.path("custom_components", "bookcase", "www")
     try:
-        hass.http.register_static_path("/bookcase_static", www_path, cache_headers=False)
-        _LOGGER.info("Bookcase: Registered static path /bookcase_static for %s", www_path)
+        hass.http.register_static_path("/bookcase_assets", www_path, cache_headers=False)
+        _LOGGER.info("Bookcase: Registered static path /bookcase_assets for %s", www_path)
     except Exception as e:
-        # Ignorujeme chybu, pokud je cesta již zaregistrována (např. při reloadu)
-        _LOGGER.debug("Bookcase: Static path /bookcase_static already registered or error: %s", e)
+        _LOGGER.debug("Bookcase: Static path /bookcase_assets already registered: %s", e)
     
     hass.http.register_view(BookcaseCoverView(hass, data["books"]))
         
@@ -315,11 +311,10 @@ async def async_setup_entry(hass: HomeAssistant, entry):
             frontend_url_path="bookcase",
             config={"_panel_custom": {
                 "name": "bookcase-panel",
-                "module_url": "/bookcase_static/panel.js?v=7.6"
+                "module_url": "/bookcase_assets/panel.js?v=7.7"
             }},
             require_admin=False,
         )
-        hass.data[DOMAIN]["static_path_registered"] = True
     except Exception as e:
         _LOGGER.error("Error registering panel: %s", e)
 
