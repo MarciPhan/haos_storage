@@ -1110,7 +1110,7 @@ class BookcasePanel extends HTMLElement {
       return;
     }
 
-    const books = state.attributes.books;
+    let books = state.attributes.books;
     const userName = this._hass.user ? (this._hass.user.name || this._hass.user.id || 'Uživatel') : 'Uživatel';
     
     // Filter out optimistic deletions
