@@ -305,23 +305,23 @@ async def async_setup_entry(hass: HomeAssistant, entry):
     
     hass.http.register_view(BookcaseCoverView(hass, data["books"]))
         
-        try:
-            from homeassistant.components.frontend import async_register_built_in_panel
-            async_register_built_in_panel(
-                hass,
-                component_name="custom",
-                sidebar_title="Knihovnička",
-                sidebar_icon="mdi:bookshelf",
-                frontend_url_path="bookcase",
-                config={"_panel_custom": {
-                    "name": "bookcase-panel",
-                    "module_url": "/bookcase_static/panel.js?v=7.6"
-                }},
-                require_admin=False,
-            )
-            hass.data[DOMAIN]["static_path_registered"] = True
-        except Exception as e:
-            _LOGGER.error("Error registering panel: %s", e)
+    try:
+        from homeassistant.components.frontend import async_register_built_in_panel
+        async_register_built_in_panel(
+            hass,
+            component_name="custom",
+            sidebar_title="Knihovnička",
+            sidebar_icon="mdi:bookshelf",
+            frontend_url_path="bookcase",
+            config={"_panel_custom": {
+                "name": "bookcase-panel",
+                "module_url": "/bookcase_static/panel.js?v=7.6"
+            }},
+            require_admin=False,
+        )
+        hass.data[DOMAIN]["static_path_registered"] = True
+    except Exception as e:
+        _LOGGER.error("Error registering panel: %s", e)
 
     await hass.config_entries.async_forward_entry_setups(entry, ["sensor"])
     return True
