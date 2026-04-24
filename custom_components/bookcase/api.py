@@ -31,7 +31,6 @@ async def fetch_book_metadata(hass, isbn: str) -> dict | None:
             _safe_fetch("Google Books", fetch_google_books, session, isbn),
             _safe_fetch("Open Library", fetch_open_library, session, isbn),
             _safe_fetch("Knihovny.cz", fetch_knihovny_cz, session, isbn),
-            _safe_fetch("Obálky knih", fetch_obalky_knih, session, isbn),
         ),
         timeout=_TOTAL_TIMEOUT,
     )
@@ -116,9 +115,7 @@ def _merge_results(isbn: str, results: list[dict]) -> dict:
         url = res.get("cover_url")
         if url:
             score = 10  # default
-            if "obalkyknih.cz" in url:
-                score = 100
-            elif "knihovny.cz" in url:
+            if "knihovny.cz" in url:
                 score = 90
             elif "googleapis.com" in url or "google" in url:
                 # Preferujeme vyšší rozlišení
@@ -188,17 +185,22 @@ async def fetch_open_library(session, isbn: str) -> dict | None:
 
 
 async def fetch_knihovny_cz(session, isbn: str) -> dict | None:
-    """Knihovny.cz API."""
-    url = f"https://www.knihovny.cz/api/v1/search?q=isbn:{isbn}"
+    """Knihovny.cz API – správný ISN search."""
+    url = f"https://www.knihovny.cz/api/v1/search?lookfor={isbn}&type=ISN"
     async with session.get(url, timeout=_SOURCE_TIMEOUT) as resp:
         if resp.status != 200:
             return None
         data = await resp.json()
-        if data.get("resultCount", 0) == 0:
+        count = data.get("resultCount", 0)
+        if count == 0 or count > 50:
+            # 0 = nic nenalezeno, >50 = příliš obecný výsledek (špatný query)
             return None
 
         r = data["records"][0]
         authors_dict = r.get("authors", {}).get("primary", {})
+        # primary může být dict nebo list (prázdný)
+        if isinstance(authors_dict, list):
+            authors_dict = {}
         return {
             "title": r.get("title"),
             "authors": list(authors_dict.keys()) if authors_dict else [],
@@ -208,21 +210,3 @@ async def fetch_knihovny_cz(session, isbn: str) -> dict | None:
         }
 
 
-async def fetch_obalky_knih(session, isbn: str) -> dict | None:
-    """Obálky knih API – hlavně pro kvalitní cover art."""
-    url = f"https://www.obalkyknih.cz/api/books?query=isbn:{isbn}"
-    async with session.get(url, timeout=_SOURCE_TIMEOUT) as resp:
-        if resp.status != 200:
-            return None
-        data = await resp.json()
-        if not data:
-            return None
-
-        for _key in data:
-            b = data[_key]
-            if b.get("cover_url"):
-                return {
-                    "cover_url": b["cover_url"],
-                    "title": b.get("title"),
-                }
-        return None
