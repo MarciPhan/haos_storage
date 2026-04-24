@@ -18,7 +18,7 @@ class BookcasePanel extends HTMLElement {
     // Pokud je v hlavním názvu dvojtečka, rozdělíme ji (často se to stává po importu)
     if (title.includes(':')) {
       const parts = title.split(':');
-      title = parts[0].strip ? parts[0].trim() : parts[0];
+      title = parts[0].trim();
       const extraSub = parts.slice(1).join(':').trim();
       // Pokud nemáme podnázev, použijeme ten z titulu. Jinak ho tam necháme.
       if (!subtitle) subtitle = extraSub;
@@ -715,63 +715,79 @@ class BookcasePanel extends HTMLElement {
     }
   }
 
-  saveBook(bookId) {
-    if (this._loading) return;
+  saveBook(bookId, specificUpdates = null) {
     this._loading = true;
     this.updateButtons();
 
-    const v = id => (this.querySelector(id)?.value ?? '').trim();
-    const readBy = JSON.parse(this.querySelector('#modal-body').dataset.readBy || '[]');
-    const wishlistBy = JSON.parse(this.querySelector('#modal-body').dataset.wishlistBy || '[]');
-    const genreStr = v('#edit-genre');
-
-    const state = this._hass.states['sensor.bookcase_total_books'];
-    const book = state?.attributes.books.find(b => b.id === bookId) || {};
     const userName = this._hass.user.name || this._hass.user.id || 'Uživatel';
+    let serviceData = { book_id: bookId };
 
-    const ratingsBy = { ...(book.ratings_by || {}) };
-    const notesBy = { ...(book.notes_by || {}) };
-    const statusesBy = { ...(book.statuses_by || {}) };
-    
-    ratingsBy[userName] = parseInt(this.querySelector('#edit-rating')?.dataset?.value) || 0;
-    notesBy[userName] = v('#edit-notes');
-    statusesBy[userName] = v('#edit-status');
+    if (specificUpdates) {
+      Object.assign(serviceData, specificUpdates);
+    } else {
+      // Plné uložení (z tlačítka)
+      const v = id => (this.querySelector(id)?.value ?? '').trim();
+      const readBy = JSON.parse(this.querySelector('#modal-body').dataset.readBy || '[]');
+      const wishlistBy = JSON.parse(this.querySelector('#modal-body').dataset.wishlistBy || '[]');
+      const genreStr = v('#edit-genre');
 
-    const serviceData = {
-      title: v('#edit-title'),
-      subtitle: v('#edit-subtitle'),
-      authors: v('#edit-author').split(',').map(s => s.trim()).filter(s => s),
-      cover_url: v('#edit-cover-url') || null,
-      publisher: v('#edit-publisher'),
-      year: v('#edit-year'),
-      language: v('#edit-language'),
-      page_count: parseInt(v('#edit-pages')) || 0,
-      count: parseInt(v('#edit-count')) || 1,
-      genre: genreStr ? genreStr.split(',').map(s => s.trim()).filter(s => s) : [],
-      url: v('#edit-url'),
-      ratings_by: ratingsBy,
-      notes_by: notesBy,
-      statuses_by: statusesBy,
-      condition: v('#edit-condition'),
-      description: v('#edit-description'),
-      date_read: v('#edit-date-read'),
-      lent_to: v('#edit-lent') || null,
-      lent_until: v('#edit-lent-until') || null,
-      read_by: readBy,
-      wishlist_by: wishlistBy,
-      is_read: readBy.length > 0
-    };
+      Object.assign(serviceData, {
+        title: v('#edit-title'),
+        subtitle: v('#edit-subtitle'),
+        authors: v('#edit-author').split(',').map(s => s.trim()).filter(s => s),
+        cover_url: v('#edit-cover-url') || null,
+        publisher: v('#edit-publisher'),
+        year: v('#edit-year'),
+        language: v('#edit-language'),
+        page_count: parseInt(v('#edit-pages')) || 0,
+        count: parseInt(v('#edit-count')) || 1,
+        genre: genreStr ? genreStr.split(',').map(s => s.trim()).filter(s => s) : [],
+        url: v('#edit-url'),
+        ratings_by: { [userName]: parseInt(this.querySelector('#edit-rating')?.dataset?.value) || 0 },
+        notes_by: { [userName]: v('#edit-notes') },
+        statuses_by: { [userName]: v('#edit-status') },
+        condition: v('#edit-condition'),
+        description: v('#edit-description'),
+        date_read: v('#edit-date-read'),
+        lent_to: v('#edit-lent') || null,
+        lent_until: v('#edit-lent-until') || null,
+        read_by: readBy,
+        wishlist_by: wishlistBy,
+      });
+    }
+
+    // Optimistická aktualizace lokálního stavu
+    const state = this._hass.states['sensor.bookcase_total_books'];
+    const book = state?.attributes.books.find(b => b.id === bookId);
+    if (book) {
+      for (let key in serviceData) {
+        if (key === 'book_id') continue;
+        const val = serviceData[key];
+        if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
+            // Merge pro slovníky (ratings_by atd.)
+            book[key] = { ...(book[key] || {}), ...val };
+        } else {
+            book[key] = val;
+        }
+      }
+      // Synchronizace hlavního statusu pro render
+      if (serviceData.statuses_by?.[userName]) book.status = serviceData.statuses_by[userName];
+      this.render();
+    }
 
     if (this._manualMode) {
       this._hass.callService('bookcase', 'add_manual', serviceData);
     } else {
-      this._hass.callService('bookcase', 'update_book', { ...serviceData, book_id: bookId });
+      this._hass.callService('bookcase', 'update_book', serviceData);
     }
-    setTimeout(() => { this.modal.classList.remove('open'); }, 400);
+
+    // Modal zavíráme jen při plném uložení nebo manuálním přidání
+    if (!specificUpdates || this._manualMode) {
+      setTimeout(() => { this.modal.classList.remove('open'); }, 400);
+    }
   }
 
   deleteBook(bookId) {
-    if (this._loading) return;
     if (confirm('Opravdu chcete tuto knihu smazat?')) {
       this._loading = true;
       this.updateButtons();
@@ -831,7 +847,11 @@ class BookcasePanel extends HTMLElement {
 
     this.updateToggleButtons();
     // Auto-save on toggle
-    this.saveBook(bookId);
+    this.saveBook(bookId, { 
+      read_by: list, 
+      wishlist_by: JSON.parse(body.dataset.wishlistBy || '[]'),
+      statuses_by: { [userName]: statusSelect ? statusSelect.value : 'to_read' }
+    });
   }
 
   updateToggleButtons() {
@@ -1051,8 +1071,12 @@ class BookcasePanel extends HTMLElement {
         body.dataset.readBy = JSON.stringify(readList);
         body.dataset.wishlistBy = JSON.stringify(wishList);
         this.updateToggleButtons();
-        // Auto-save on status change
-        this.saveBook(book.id);
+        // Auto-save on status change (partial)
+        this.saveBook(book.id, { 
+          statuses_by: { [userName]: val },
+          read_by: readList,
+          wishlist_by: wishList
+        });
       };
     }
 
@@ -1064,14 +1088,19 @@ class BookcasePanel extends HTMLElement {
         starContainer.querySelectorAll('span').forEach(s => {
           s.innerText = parseInt(s.dataset.n) <= n ? '★' : '☆';
         });
-        // Auto-save on rating change
-        this.saveBook(book.id);
+        // Auto-save on rating change (partial)
+        this.saveBook(book.id, { ratings_by: { [userName]: n } });
       };
     });
 
     const conditionSelect = body.querySelector('#edit-condition');
     if (conditionSelect) {
-      conditionSelect.onchange = () => this.saveBook(book.id);
+      conditionSelect.onchange = () => this.saveBook(book.id, { condition: conditionSelect.value });
+    }
+
+    const notesArea = body.querySelector('#edit-notes');
+    if (notesArea) {
+      notesArea.onblur = () => this.saveBook(book.id, { notes_by: { [userName]: notesArea.value.trim() } });
     }
 
     // Vráceno button – optimistic UI

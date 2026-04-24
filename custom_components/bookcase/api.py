@@ -36,20 +36,22 @@ async def fetch_book_metadata(hass, isbn: str) -> dict | None:
     All sources run in parallel with individual timeouts.
     The total operation is capped at _TOTAL_TIMEOUT seconds.
     """
-    isbn = re.sub(r'[- ]', '', isbn)
-    if not isbn:
-        return None
-
+    original_query = isbn.strip()
+    normalized_isbn = re.sub(r'[- ]', '', original_query)
+    
     session = async_get_clientsession(hass)
 
     # Spustíme všechny zdroje paralelně
     results = await asyncio.wait_for(
         asyncio.gather(
-            _safe_fetch("Google Books", fetch_google_books, session, isbn),
-            _safe_fetch("Open Library", fetch_open_library, session, isbn),
-            _safe_fetch("Knihovny.cz", fetch_knihovny_cz, session, isbn),
-            _safe_fetch("ObalkyKnih", fetch_obalkyknih_cz, session, isbn),
-            _safe_fetch("Didasko.cz", fetch_didasko_cz, session, isbn),
+            _safe_fetch("Google Books", fetch_google_books, session, normalized_isbn),
+            _safe_fetch("Open Library", fetch_open_library, session, normalized_isbn),
+            _safe_fetch("Knihovny.cz", fetch_knihovny_cz, session, normalized_isbn, original_query),
+            _safe_fetch("ObalkyKnih", fetch_obalkyknih_cz, session, normalized_isbn),
+            _safe_fetch("Didasko.cz", fetch_didasko_cz, session, normalized_isbn),
+            _safe_fetch("Databáze knih", fetch_databazeknih_cz, session, original_query),
+            _safe_fetch("NKP", fetch_nkp_cz, session, original_query),
+            _safe_fetch("Martinus", fetch_martinus_cz, session, normalized_isbn, original_query),
         ),
         timeout=_TOTAL_TIMEOUT,
     )
@@ -57,22 +59,22 @@ async def fetch_book_metadata(hass, isbn: str) -> dict | None:
     # Filtrujeme platné výsledky
     valid = [r for r in results if r is not None]
     if not valid:
-        _LOGGER.warning("Bookcase: No metadata found for ISBN %s from any source", isbn)
+        _LOGGER.warning("Bookcase: No metadata found for query '%s' from any source", original_query)
         return None
 
     _LOGGER.info(
-        "Bookcase: Got %d/%d results for ISBN %s",
-        len(valid), len(results), isbn
+        "Bookcase: Got %d/%d results for query '%s'",
+        len(valid), len(results), original_query
     )
 
-    return _merge_results(isbn, valid)
+    return _merge_results(normalized_isbn, valid)
 
 
-async def _safe_fetch(name: str, fn, session, isbn: str) -> dict | None:
+async def _safe_fetch(name: str, fn, session, *args) -> dict | None:
     """Wrap a fetch function with timeout and error handling."""
     try:
-        result = await asyncio.wait_for(fn(session, isbn), timeout=_SOURCE_TIMEOUT)
-        if result and result.get("title"):
+        result = await asyncio.wait_for(fn(session, *args), timeout=_SOURCE_TIMEOUT)
+        if result and (result.get("title") or result.get("cover_url")):
             _LOGGER.debug("Bookcase: %s returned data for ISBN %s", name, isbn)
             return result
         # Zdroj odpověděl ale nic nenašel – to je OK, ne error
@@ -163,6 +165,10 @@ def _merge_results(isbn: str, results: list[dict]) -> dict:
             score = 10  # default
             if "obalkyknih.cz" in url:
                 score = 110 # ObalkyKnih (české) mají nejvyšší prioritu pro lokální knihy
+            elif "databazeknih.cz" in url:
+                score = 120 # Databáze knih má často nejhezčí fotky
+            elif "martinus.cz" in url or "martinus.sk" in url:
+                score = 105
             elif "googleapis.com" in url or "books.google" in url:
                 # Google Books má velmi spolehlivé obálky
                 score = 100 if "zoom=1" not in url else 80
@@ -277,80 +283,202 @@ async def fetch_open_library(session, isbn: str) -> dict | None:
         }
 
 
-async def fetch_knihovny_cz(session, isbn: str) -> dict | None:
-    """Knihovny.cz API – správný ISN search."""
+async def fetch_knihovny_cz(session, isbn: str, original_query: str = "") -> dict | None:
+    """Knihovny.cz API – správný ISN search + AllFields fallback pro staré kódy."""
+    # 1. Zkusíme ISN search (ISBN/ISSN)
     url = f"https://www.knihovny.cz/api/v1/search?lookfor={isbn}&type=ISN"
     async with session.get(url, timeout=_SOURCE_TIMEOUT) as resp:
-        if resp.status != 200:
-            return None
-        data = await resp.json()
-        count = data.get("resultCount", 0)
-        if count == 0 or count > 50:
-            # 0 = nic nenalezeno, >50 = příliš obecný výsledek (špatný query)
-            return None
+        if resp.status == 200:
+            data = await resp.json()
+            if data.get("resultCount", 0) > 0:
+                return await _parse_knihovny_record(session, data["records"][0])
 
-        r = data["records"][0]
-        authors_dict = r.get("authors", {}).get("primary", {})
-        # primary může být dict nebo list (prázdný)
-        if isinstance(authors_dict, list):
-            authors_dict = {}
+    # 2. Fallback: Citované AllFields vyhledávání pro staré publikace (např. "23-058-65")
+    if original_query and original_query != isbn:
+        quoted = f'"{original_query}"'
+        url = f"https://www.knihovny.cz/api/v1/search?lookfor={quoted}&type=AllFields"
+        async with session.get(url, timeout=_SOURCE_TIMEOUT) as resp:
+            if resp.status == 200:
+                data = await resp.json()
+                if data.get("resultCount", 0) > 0:
+                    return await _parse_knihovny_record(session, data["records"][0])
+    return None
 
-        # Žánry z subjects – každý subject je list stringů, bereme první
-        genres = []
-        for subj in r.get("subjects", []):
-            if isinstance(subj, list) and subj:
-                name = subj[0]
-                if name and name not in genres:
-                    genres.append(name)
 
-        # Jazyky
-        langs = r.get("languages", [])
-        language = _normalize_language(langs[0]) if langs else ""
+async def _parse_knihovny_record(session, r: dict) -> dict:
+    """Parse common Knihovny.cz record format."""
+    authors_dict = r.get("authors", {}).get("primary", {})
+    if isinstance(authors_dict, list): authors_dict = {}
+
+    genres = []
+    for subj in r.get("subjects", []):
+        if isinstance(subj, list) and subj:
+            name = subj[0]
+            if name and name not in genres: genres.append(name)
+
+    langs = r.get("languages", [])
+    language = _normalize_language(langs[0]) if langs else ""
+    
+    publish_date = r.get("publicationDate")
+    publishers = []
+    pages = None
+    
+    record_id = r.get("id")
+    if record_id:
+        xml_url = f"https://www.knihovny.cz/Record/{record_id}/Export?style=MARCXML"
+        try:
+            async with session.get(xml_url, timeout=5) as xml_resp:
+                if xml_resp.status == 200:
+                    xml = await xml_resp.text()
+                    if not publish_date:
+                        y = re.search(r'<subfield code="c">.*?(\d{4}).*?</subfield>', xml)
+                        if y: publish_date = y.group(1)
+                    p = re.search(r'<datafield tag="26[04]".*?code="b">([^<]+)</subfield>', xml, re.DOTALL)
+                    if p: publishers.append(p.group(1).strip(" ,:;/"))
+                    pg = re.search(r'<subfield code="a">.*?(\d+)\s*s\..*?</subfield>', xml)
+                    if pg: pages = int(pg.group(1))
+        except: pass
+
+    return {
+        "title": r.get("title"),
+        "authors": list(authors_dict.keys()) if authors_dict else [],
+        "cover_url": f"https://www.knihovny.cz/Cover/Show?id={record_id}&size=large" if record_id else None,
+        "publish_date": publish_date,
+        "publishers": publishers,
+        "pages": pages,
+        "language": language,
+        "genres": genres[:5],
+        "url": f"https://www.knihovny.cz/Record/{record_id}" if record_id else None,
+    }
+
+
+async def fetch_nkp_cz(session, query: str) -> dict | None:
+    """Národní knihovna ČR – Aleph X-Server."""
+    # Pro jistotu zkusíme citované vyhledávání pro ne-ISBN kódy
+    req = f'"{query}"' if "-" in query else query
+    url = f"https://aleph.nkp.cz/X?op=find&code=WRD&request={req}"
+    try:
+        async with session.get(url, timeout=_SOURCE_TIMEOUT) as resp:
+            if resp.status != 200: return None
+            text = await resp.text()
+            
+        set_entry = re.search(r'<set_number>(\d+)</set_number>.*?<no_records>(\d+)</no_records>', text, re.DOTALL)
+        if not set_entry or int(set_entry.group(2)) == 0: return None
         
-        publish_date = r.get("publicationDate")
-        publishers = []
-        pages = None
+        set_num = set_entry.group(1)
+        present_url = f"https://aleph.nkp.cz/X?op=present&set_number={set_num}&set_entry=000000001&format=marc"
+        async with session.get(present_url, timeout=_SOURCE_TIMEOUT) as resp:
+            if resp.status != 200: return None
+            marc = await resp.text()
+            
+        # Velmi hrubý MARC parser přes regexy
+        def get_field(tag, sub=""):
+            m = re.search(f'<varfield id="{tag}"[^>]*>(.*?)</varfield>', marc, re.DOTALL)
+            if not m: return ""
+            if not sub: return m.group(1).replace('<subfield label="', '$$').replace('">', '').replace('</subfield>', '')
+            sm = re.search(f'<subfield label="{sub}">(.*?)</subfield>', m.group(1))
+            return sm.group(1).strip() if sm else ""
+
+        title = get_field("245", "a").strip(" /:,")
+        author = get_field("100", "a").strip(" ,")
+        publisher = get_field("260", "b").strip(" ,:") or get_field("264", "b").strip(" ,:")
+        year = re.search(r'\d{4}', get_field("260", "c") or get_field("264", "c"))
+        pages = re.search(r'(\d+)\s*s\.', get_field("300", "a"))
+        sysid = re.search(r'<doc_number>(\d+)</doc_number>', marc)
+
+        if not title: return None
+        return {
+            "title": title,
+            "authors": [author] if author else [],
+            "publishers": [publisher] if publisher else [],
+            "publish_date": year.group(0) if year else None,
+            "pages": int(pages.group(1)) if pages else None,
+            "url": f"https://aleph.nkp.cz/F/?func=direct&doc_number={sysid.group(1)}&local_base=NKC" if sysid else None,
+        }
+    except: return None
+
+
+async def fetch_databazeknih_cz(session, query: str) -> dict | None:
+    """Databazeknih.cz – nejlepší český komunitní web."""
+    url = f"https://www.databazeknih.cz/search?q={query}"
+    try:
+        async with session.get(url, timeout=_SOURCE_TIMEOUT, allow_redirects=True) as resp:
+            if resp.status != 200: return None
+            text = await resp.text()
+            # Pokud nás to hodilo rovnou na knihu (přesměrování při přesné shodě)
+            final_url = str(resp.url)
+            
+        if "/knihy/" not in final_url and "/prehled-knihy/" not in final_url:
+            # Jsme na výsledcích hledání – zkusíme vzít první odkaz
+            match = re.search(r'href=["\'](https://www.databazeknih.cz/(?:prehled-knihy|knihy)/[^"\']+)["\']', text)
+            if not match: return None
+            url = match.group(1)
+            async with session.get(url, timeout=_SOURCE_TIMEOUT) as resp:
+                if resp.status != 200: return None
+                text = await resp.text()
         
-        # 2. fáze: Získání dodatečných informací (strany, rok, nakladatel) z MARCXML
-        record_id = r.get("id")
-        if record_id:
-            xml_url = f"https://www.knihovny.cz/Record/{record_id}/Export?style=MARCXML"
-            try:
-                async with session.get(xml_url, timeout=5) as xml_resp:
-                    if xml_resp.status == 200:
-                        xml = await xml_resp.text()
-                        
-                        # Rok vydání z MARC 260/264 podpole 'c'
-                        if not publish_date:
-                            year_match = re.search(r'<datafield tag="26[04]".*?>.*?<subfield code="c">.*?(\d{4}).*?</subfield>.*?</datafield>', xml, re.DOTALL)
-                            if year_match:
-                                publish_date = year_match.group(1)
-                                
-                        # Nakladatel z MARC 260/264 podpole 'b'
-                        pub_match = re.search(r'<datafield tag="26[04]".*?>.*?<subfield code="b">([^<]+)</subfield>.*?</datafield>', xml, re.DOTALL)
-                        if pub_match:
-                            pub_clean = pub_match.group(1).strip(" ,:;/")
-                            if pub_clean:
-                                publishers.append(pub_clean)
-                                
-                        # Počet stran z MARC 300 podpole 'a'
-                        pages_match = re.search(r'<datafield tag="300".*?>.*?<subfield code="a">.*?(\d+).*?</subfield>.*?</datafield>', xml, re.DOTALL)
-                        if pages_match:
-                            pages = int(pages_match.group(1))
-            except Exception as e:
-                pass # Nevadí, prostě nemáme dodatečná data
+        title_match = re.search(r'<h1[^>]* itemprop="name">([^<]+)</h1>', text)
+        if not title_match: title_match = re.search(r'<h1[^>]*>([^<]+)</h1>', text)
+        
+        author_match = re.search(r'<a[^>]+ itemprop="author">([^<]+)</a>', text)
+        desc_match = re.search(r'<p id="short_desc"[^>]*>(.*?)</p>', text, re.DOTALL)
+        img_match = re.search(r'<img[^>]+class="kniha_img"[^>]+src="([^"]+)"', text)
+        
+        # Detaily v pravém sloupci
+        pages = re.search(r'Po\u010det stran:.*?(\d+)', text)
+        year = re.search(r'Rok vyd\u00e1n\u00ed:.*?(\d{4})', text)
+        publisher = re.search(r'Nakladatelstv\u00ed:.*?<a[^>]+>([^<]+)</a>', text)
 
         return {
-            "title": r.get("title"),
-            "authors": list(authors_dict.keys()) if authors_dict else [],
-            "cover_url": f"https://www.knihovny.cz/Cover/Show?id={record_id}&size=large" if record_id else None,
-            "publish_date": publish_date,
-            "publishers": publishers,
-            "pages": pages,
-            "language": language,
-            "genres": genres[:5],
-            "url": f"https://www.knihovny.cz/Record/{record_id}" if record_id else None,
+            "title": title_match.group(1).strip() if title_match else None,
+            "authors": [author_match.group(1).strip()] if author_match else [],
+            "description": re.sub(r'<[^>]+>', '', desc_match.group(1)).strip() if desc_match else None,
+            "cover_url": img_match.group(1) if img_match else None,
+            "pages": int(pages.group(1)) if pages else None,
+            "publish_date": year.group(0) if year else None,
+            "publishers": [publisher.group(1).strip()] if publisher else [],
+            "url": final_url if "/knihy/" in final_url else url
         }
+    except: return None
+
+
+async def fetch_martinus_cz(session, isbn: str, query: str = "") -> dict | None:
+    """Martinus.cz – velký český e-shop."""
+    q = isbn if len(isbn) >= 10 else query
+    url = f"https://www.martinus.cz/vyhledavani?q={q}"
+    try:
+        async with session.get(url, timeout=_SOURCE_TIMEOUT) as resp:
+            if resp.status != 200: return None
+            text = await resp.text()
+            final_url = str(resp.url)
+            
+        if "/produkty/" not in final_url:
+            # Zkusíme najít první produkt v seznamu
+            match = re.search(r'href=["\'](/produkty/[^"\']+)["\']', text)
+            if not match: return None
+            url = "https://www.martinus.cz" + match.group(1)
+            async with session.get(url, timeout=_SOURCE_TIMEOUT) as resp:
+                if resp.status != 200: return None
+                text = await resp.text()
+        else:
+            url = final_url
+
+        title = re.search(r'<h1[^>]*>([^<]+)</h1>', text)
+        author = re.search(r'<li class="product-detail__author">.*?<a[^>]*>([^<]+)</a>', text, re.DOTALL)
+        img = re.search(r'<img[^>]+class="product-detail__image"[^>]+src="([^"]+)"', text)
+        pages = re.search(r'Po\u010det stran:.*?(\d+)', text)
+        year = re.search(r'Rok vyd\u00e1n\u00ed:.*?(\d{4})', text)
+        
+        return {
+            "title": title.group(1).strip() if title else None,
+            "authors": [author.group(1).strip()] if author else [],
+            "cover_url": img.group(1) if img else None,
+            "pages": int(pages.group(1)) if pages else None,
+            "publish_date": year.group(0) if year else None,
+            "url": url
+        }
+    except: return None
+
 
 async def fetch_didasko_cz(session, isbn: str) -> dict | None:
     """Scrapuje obchod Didasko.cz pro jejich specifické knihy."""
