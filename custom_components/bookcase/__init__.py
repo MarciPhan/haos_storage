@@ -134,7 +134,7 @@ async def async_setup_entry(hass: HomeAssistant, entry):
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = {"books": data["books"]}
     
-    if "bookcase_static" not in hass.http.views:
+    if "static_path_registered" not in hass.data[DOMAIN]:
         hass.http.register_static_path("/bookcase_static", hass.config.path("custom_components/bookcase/www"), False)
         
         try:
@@ -151,6 +151,7 @@ async def async_setup_entry(hass: HomeAssistant, entry):
                 }},
                 require_admin=False,
             )
+            hass.data[DOMAIN]["static_path_registered"] = True
         except Exception as e:
             _LOGGER.error("Error registering panel: %s", e)
 
