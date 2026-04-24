@@ -398,6 +398,27 @@ class BookcasePanel extends HTMLElement {
           .modal-left { width: 100%; height: 200px; }
           .form-row.cols-3 { grid-template-columns: 1fr 1fr; }
         }
+
+        #scanner-modal {
+          display:none; position:fixed; top:0; left:0; width:100%; height:100%;
+          background:rgba(0,0,0,0.9); z-index:2000;
+          align-items:center; justify-content:center; flex-direction:column;
+        }
+        #scanner-modal.open { display:flex; }
+        #scanner-reader { width:min(400px, 90vw); }
+        #scanner-close {
+          position:absolute; top:20px; right:20px;
+          width:44px; height:44px; border-radius:50%; background:rgba(255,255,255,0.2);
+          color:white; font-size:24px; border:none; cursor:pointer;
+          display:flex; align-items:center; justify-content:center;
+        }
+        .scan-btn {
+          background: var(--primary-color); color:white; border:none;
+          width:42px; height:42px; border-radius:8px; cursor:pointer;
+          font-size:1.2rem; display:flex; align-items:center; justify-content:center;
+          transition: opacity 0.2s;
+        }
+        .scan-btn:hover { opacity:0.8; }
       </style>
       
       <div class="container">
@@ -414,6 +435,7 @@ class BookcasePanel extends HTMLElement {
             </div>
             <div class="add-box">
               <input type="text" id="isbn-input" placeholder="ISBN...">
+              <button id="scan-btn" class="scan-btn" title="Skenovat čárový kód">📷</button>
               <button id="add-btn" class="action-btn">
                 <span class="spinner" id="add-spinner"></span>
                 <span id="add-text">ISBN</span>
@@ -437,6 +459,11 @@ class BookcasePanel extends HTMLElement {
         <div class="grid" id="book-grid"></div>
       </div>
 
+      <div id="scanner-modal">
+        <button id="scanner-close">&times;</button>
+        <div id="scanner-reader"></div>
+        <p style="color:white; margin-top:16px; font-size:0.9rem;">Namiřte kameru na čárový kód knihy (ISBN)</p>
+      </div>
       <div id="book-modal" class="modal">
         <div class="modal-content">
           <div class="modal-close">&times;</div>
@@ -453,6 +480,8 @@ class BookcasePanel extends HTMLElement {
 
     this.querySelector('#add-btn').onclick = () => this.handleAdd();
     this.querySelector('#manual-btn').onclick = () => this.openManualAdd();
+    this.querySelector('#scan-btn').onclick = () => this.startScanner();
+    this.querySelector('#scanner-close').onclick = () => this.stopScanner();
     this.isbnInput.onkeypress = (e) => { if (e.key === 'Enter') this.handleAdd(); };
     this.searchInput.oninput = (e) => {
       this._searchQuery = e.target.value.toLowerCase();
@@ -470,6 +499,57 @@ class BookcasePanel extends HTMLElement {
 
     this.modalClose.onclick = () => this.modal.classList.remove('open');
     this.modal.onclick = (e) => { if (e.target === this.modal) this.modal.classList.remove('open'); };
+  }
+
+  async startScanner() {
+    const scannerModal = this.querySelector('#scanner-modal');
+    scannerModal.classList.add('open');
+
+    // Dynamicky načteme html5-qrcode pokud ještě není
+    if (!window.Html5Qrcode) {
+      try {
+        await new Promise((resolve, reject) => {
+          const s = document.createElement('script');
+          s.src = 'https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js';
+          s.onload = resolve;
+          s.onerror = reject;
+          document.head.appendChild(s);
+        });
+      } catch {
+        this.showToast('Nepodařilo se načíst skener', 'error');
+        scannerModal.classList.remove('open');
+        return;
+      }
+    }
+
+    try {
+      this._scanner = new Html5Qrcode('scanner-reader');
+      await this._scanner.start(
+        { facingMode: 'environment' },
+        { fps: 10, qrbox: { width: 280, height: 150 }, formatsToSupport: [0, 3, 4] },
+        (decodedText) => {
+          // ISBN nalezeno
+          const isbn = decodedText.replace(/[^0-9X]/gi, '');
+          if (isbn.length >= 10) {
+            this.stopScanner();
+            this.isbnInput.value = isbn;
+            this.handleAdd();
+          }
+        }
+      );
+    } catch (err) {
+      this.showToast('Kamera není dostupná', 'error');
+      scannerModal.classList.remove('open');
+    }
+  }
+
+  stopScanner() {
+    if (this._scanner) {
+      this._scanner.stop().catch(() => {});
+      this._scanner.clear();
+      this._scanner = null;
+    }
+    this.querySelector('#scanner-modal').classList.remove('open');
   }
 
   handleAdd() {
@@ -549,6 +629,16 @@ class BookcasePanel extends HTMLElement {
     const wishlistBy = JSON.parse(this.querySelector('#modal-body').dataset.wishlistBy || '[]');
     const genreStr = v('#edit-genre');
 
+    const state = this._hass.states['sensor.bookcase_total_books'];
+    const book = state?.attributes.books.find(b => b.id === bookId) || {};
+    const userName = this._hass.user.name || 'Uživatel';
+
+    const ratingsBy = { ...(book.ratings_by || {}) };
+    const notesBy = { ...(book.notes_by || {}) };
+    
+    ratingsBy[userName] = parseInt(this.querySelector('#edit-rating')?.dataset?.value) || 0;
+    notesBy[userName] = v('#edit-notes');
+
     const serviceData = {
       title: v('#edit-title'),
       subtitle: v('#edit-subtitle'),
@@ -562,8 +652,8 @@ class BookcasePanel extends HTMLElement {
       genre: genreStr ? genreStr.split(',').map(s => s.trim()).filter(s => s) : [],
       url: v('#edit-url'),
       status: v('#edit-status'),
-      rating: parseInt(this.querySelector('#edit-rating')?.dataset?.value) || 0,
-      notes: v('#edit-notes'),
+      ratings_by: ratingsBy,
+      notes_by: notesBy,
       description: v('#edit-description'),
       date_read: v('#edit-date-read'),
       lent_to: v('#edit-lent') || null,
@@ -651,11 +741,31 @@ class BookcasePanel extends HTMLElement {
   openDetail(book) {
     if (!this._manualMode) this._manualMode = false;
     const body = this.querySelector('#modal-body');
+    const userName = this._hass.user.name || 'Uživatel';
+    
     body.dataset.readBy = JSON.stringify(Array.isArray(book.read_by) ? book.read_by : (book.read_by ? [book.read_by] : []));
     body.dataset.wishlistBy = JSON.stringify(Array.isArray(book.wishlist_by) ? book.wishlist_by : []);
-    const rating = book.rating || 0;
+    
+    const rating = (book.ratings_by && book.ratings_by[userName]) || 0;
+    const notes = (book.notes_by && book.notes_by[userName]) || "";
     const genres = Array.isArray(book.genre) ? book.genre.join(', ') : (book.genre || '');
     const isLent = !!(book.lent_to);
+
+    // List other users ratings/notes
+    let otherUsersHtml = "";
+    if (book.ratings_by || book.notes_by) {
+        const users = new Set([...Object.keys(book.ratings_by || {}), ...Object.keys(book.notes_by || {})]);
+        users.delete(userName);
+        if (users.size > 0) {
+            otherUsersHtml = `<div class="user-list" style="margin-top:10px; border-top:1px solid var(--divider-color); padding-top:10px;">`;
+            users.forEach(u => {
+                const uRating = book.ratings_by?.[u] ? '★'.repeat(book.ratings_by[u]) : '';
+                const uNote = book.notes_by?.[u] || '';
+                otherUsersHtml += `<div style="margin-bottom:5px;"><b>${u}:</b> <span style="color:#ffca28;">${uRating}</span> ${uNote}</div>`;
+            });
+            otherUsersHtml += `</div>`;
+        }
+    }
 
     body.innerHTML = `
       <div class="modal-left">
@@ -773,16 +883,18 @@ class BookcasePanel extends HTMLElement {
 
         <div class="section-title">📝 Poznámky</div>
         <div class="form-group">
-          <textarea id="edit-notes" rows="2" placeholder="Vaše poznámky...">${book.notes || ''}</textarea>
+          <textarea id="edit-notes" rows="2" placeholder="Moje osobní poznámky...">${notes}</textarea>
+          ${otherUsersHtml}
         </div>
         <div class="form-group">
           <label>Popis</label>
           <textarea id="edit-description" rows="3" placeholder="Popis knihy...">${book.description || ''}</textarea>
         </div>
 
-        <div style="display:flex; gap:12px; margin-top:16px;">
-          <button class="action-btn" id="save-btn" style="flex-grow:1; height:48px; font-size:0.95rem; border-radius:10px;">${this._manualMode ? '＋ Přidat knihu' : '💾 Uložit změny'}</button>
-          ${!this._manualMode ? `<button class="action-btn" id="modal-delete-btn" style="background:#f44336; height:48px; border-radius:10px; padding:0 20px;">🗑 Smazat</button>` : ''}
+        <div style="display:flex; gap:12px; margin-top:16px; flex-wrap: wrap;">
+          <button class="action-btn" id="save-btn" style="flex: 2; height:48px; font-size:0.95rem; border-radius:10px;">${this._manualMode ? '＋ Přidat knihu' : '💾 Uložit změny'}</button>
+          ${!this._manualMode ? `<button class="action-btn" id="refresh-btn" style="background:var(--secondary-background-color); border:1px solid var(--divider-color); height:48px; border-radius:10px; padding:0 15px;" title="Aktualizovat metadata z internetu">🔄</button>` : ''}
+          ${!this._manualMode ? `<button class="action-btn" id="modal-delete-btn" style="background:#f44336; height:48px; border-radius:10px; padding:0 15px;">🗑</button>` : ''}
         </div>
       </div>
     `;
@@ -819,7 +931,17 @@ class BookcasePanel extends HTMLElement {
     }
 
     body.querySelector('#save-btn').onclick = () => this.saveBook(book.id);
-    if (!this._manualMode) body.querySelector('#modal-delete-btn').onclick = () => this.deleteBook(book.id);
+    if (!this._manualMode) {
+        body.querySelector('#modal-delete-btn').onclick = () => this.deleteBook(book.id);
+        const refreshBtn = body.querySelector('#refresh-btn');
+        if (refreshBtn) {
+            refreshBtn.onclick = () => {
+                this._hass.callService('bookcase', 'refresh_book', { book_id: book.id });
+                this.modal.classList.remove('open');
+                this.showToast('Aktualizuji metadata...', 'info');
+            };
+        }
+    }
     this.updateToggleButtons();
     this.modal.classList.add('open');
   }
@@ -877,7 +999,7 @@ class BookcasePanel extends HTMLElement {
         <div class="book-title">${book.title}</div>
         <div style="font-size:0.75rem; color:var(--secondary-text-color); margin-top:4px; display:flex; justify-content:space-between;">
           <span>${book.authors ? book.authors[0] : ''}</span>
-          ${book.rating > 0 ? `<span style="color:#ffca28;">${'★'.repeat(book.rating)}</span>` : ''}
+          ${(book.ratings_by && book.ratings_by[userName]) ? `<span style="color:#ffca28;">${'★'.repeat(book.ratings_by[userName])}</span>` : ''}
         </div>
       `;
       this.content.appendChild(card);
