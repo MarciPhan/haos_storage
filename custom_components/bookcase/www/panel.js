@@ -11,17 +11,24 @@ class BookcasePanel extends HTMLElement {
   }
 
   _formatTitle(book) {
-    let title = book.title || '';
-    let subtitle = book.subtitle || '';
+    if (!book) return '';
+    const title = (book.title || '').toString();
+    const subtitle = (book.subtitle || '').toString();
     
-    if (!subtitle && title.includes(':')) {
-      const index = title.indexOf(':');
-      subtitle = title.substring(index + 1).trim();
-      title = title.substring(0, index).trim();
+    // Pokud máme podnázev v databázi, použijeme ho
+    if (subtitle) {
+      return `${title}<br><span style="font-size:0.8em; font-weight:400; opacity:0.7; display:block; margin-top:2px; line-height:1.2;">${subtitle}</span>`;
     }
     
-    if (!subtitle) return title;
-    return `${title}<br><span style="font-size:0.85em; font-weight:400; opacity:0.7; display:block; margin-top:2px;">${subtitle}</span>`;
+    // Fallback: Pokud podnázev není, ale v titulu je dvojtečka, rozdělíme to za běhu
+    if (title.includes(':')) {
+      const parts = title.split(':');
+      const main = parts[0].trim();
+      const sub = parts.slice(1).join(':').trim();
+      return `${main}<br><span style="font-size:0.8em; font-weight:400; opacity:0.7; display:block; margin-top:2px; line-height:1.2;">${sub}</span>`;
+    }
+    
+    return title;
   }
 
   set hass(hass) {
@@ -712,7 +719,7 @@ class BookcasePanel extends HTMLElement {
 
     const state = this._hass.states['sensor.bookcase_total_books'];
     const book = state?.attributes.books.find(b => b.id === bookId) || {};
-    const userName = this._hass.user.name || 'Uživatel';
+    const userName = this._hass.user.name || this._hass.user.id || 'Uživatel';
 
     const ratingsBy = { ...(book.ratings_by || {}) };
     const notesBy = { ...(book.notes_by || {}) };
@@ -786,7 +793,7 @@ class BookcasePanel extends HTMLElement {
   }
 
   toggleUser(bookId, type) {
-    const userName = this._hass.user.name || 'Uživatel';
+    const userName = this._hass.user.name || this._hass.user.id || 'Uživatel';
     const body = this.querySelector('#modal-body');
     const key = type === 'read' ? 'readBy' : 'wishlistBy';
     let list = JSON.parse(body.dataset[key] || '[]');
@@ -818,7 +825,7 @@ class BookcasePanel extends HTMLElement {
   }
 
   updateToggleButtons() {
-    const userName = this._hass.user.name || 'Uživatel';
+    const userName = this._hass.user.name || this._hass.user.id || 'Uživatel';
     const body = this.querySelector('#modal-body');
     const readList = JSON.parse(body.dataset.readBy || '[]');
     const wishList = JSON.parse(body.dataset.wishlistBy || '[]');
@@ -836,7 +843,7 @@ class BookcasePanel extends HTMLElement {
   openDetail(book) {
     if (!this._manualMode) this._manualMode = false;
     const body = this.querySelector('#modal-body');
-    const userName = this._hass.user.name || 'Uživatel';
+    const userName = this._hass.user.name || this._hass.user.id || 'Uživatel';
     
     body.dataset.readBy = JSON.stringify(Array.isArray(book.read_by) ? book.read_by : (book.read_by ? [book.read_by] : []));
     body.dataset.wishlistBy = JSON.stringify(Array.isArray(book.wishlist_by) ? book.wishlist_by : []);
@@ -1084,8 +1091,8 @@ class BookcasePanel extends HTMLElement {
     const state = this._hass.states['sensor.bookcase_total_books'];
     if (!state || !state.attributes.books) return;
 
-    let books = state.attributes.books;
-    const userName = this._hass.user.name || 'Uživatel';
+    const books = state.attributes.books;
+    const userName = this._hass.user.name || this._hass.user.id || 'Uživatel';
     
     // Filter out optimistic deletions
     books = books.filter(b => !this._optimisticDeleted.has(b.id));

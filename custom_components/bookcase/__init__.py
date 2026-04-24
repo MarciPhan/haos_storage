@@ -61,26 +61,34 @@ async def async_setup_entry(hass: HomeAssistant, entry):
 
     # Migrace stávajících dat
     migrated = False
-    for book in data.get("books", {}).values():
-        # 1. Migrace titulu
-        if book.get("title") and ":" in book["title"] and not book.get("subtitle"):
-            parts = book["title"].split(":", 1)
+    for book_id, book in data.get("books", {}).items():
+        # 1. Agresivnější migrace titulu (rozdělení podle dvojtečky)
+        current_title = book.get("title", "")
+        if ":" in current_title and not book.get("subtitle"):
+            parts = current_title.split(":", 1)
             book["title"] = parts[0].strip()
             book["subtitle"] = parts[1].strip()
+            _LOGGER.info("Migrating title for book %s: %s -> %s | %s", 
+                         book_id, current_title, book["title"], book["subtitle"])
             migrated = True
         
-        # 2. Migrace stavu fyzické knihy (změna z personalizovaného na globální)
+        # 2. Migrace stavu fyzické knihy (na globální 'condition')
         if "condition" not in book:
-            # Pokud existoval starý conditions_by z minulé (chybné) verze, vezmeme první hodnotu
             old_conds = book.pop("conditions_by", {})
             book["condition"] = next(iter(old_conds.values()), "") if old_conds else ""
             migrated = True
             
-        # 3. Inicializace personalizovaného statusu čtení
+        # 3. Inicializace 'statuses_by' pro personalizovaný status
         if "statuses_by" not in book:
             book["statuses_by"] = {}
-            # Pokud má kniha globální status, použijeme ho jako základ (volitelné)
-            # Ale raději necháme prázdné a budeme řešit default v UI
+            # Pokud má kniha globální status, můžeme ho zinicializovat pro všechny, 
+            # kteří knihu už nějak interagovali (např. v read_by)
+            if book.get("status"):
+                # Pro jistotu zmigrujeme globální status do statuses_by pro existující záznamy
+                for user in book.get("read_by", []):
+                    book["statuses_by"][user] = "read"
+                for user in book.get("wishlist_by", []):
+                    book["statuses_by"][user] = "wishlist"
             migrated = True
     
     if migrated:
@@ -293,7 +301,7 @@ async def async_setup_entry(hass: HomeAssistant, entry):
                 frontend_url_path="bookcase",
                 config={"_panel_custom": {
                     "name": "bookcase-panel",
-                    "module_url": "/bookcase_static/panel.js?v=6.7"
+                    "module_url": "/bookcase_static/panel.js?v=7.0"
                 }},
                 require_admin=False,
             )
