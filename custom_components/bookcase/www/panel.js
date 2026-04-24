@@ -10,6 +10,20 @@ class BookcasePanel extends HTMLElement {
     this._sortKey = 'added_at';
   }
 
+  _formatTitle(book) {
+    let title = book.title || '';
+    let subtitle = book.subtitle || '';
+    
+    if (!subtitle && title.includes(':')) {
+      const index = title.indexOf(':');
+      subtitle = title.substring(index + 1).trim();
+      title = title.substring(0, index).trim();
+    }
+    
+    if (!subtitle) return title;
+    return `${title}<br><span style="font-size:0.85em; font-weight:400; opacity:0.7; display:block; margin-top:2px;">${subtitle}</span>`;
+  }
+
   set hass(hass) {
     const newState = hass.states['sensor.bookcase_total_books'];
     
@@ -220,11 +234,7 @@ class BookcasePanel extends HTMLElement {
           font-weight: 600;
           margin-top: 10px;
           font-size: 0.9rem;
-          display: -webkit-box;
-          -webkit-line-clamp: 2;
-          -webkit-box-orient: vertical;
-          overflow: hidden;
-          min-height: 2.4rem;
+          line-height: 1.2;
         }
         .status-badge {
           position: absolute;
@@ -400,7 +410,7 @@ class BookcasePanel extends HTMLElement {
             gap: 12px;
           }
           .book-card { padding: 6px; }
-          .book-title { font-size: 0.8rem; min-height: 2.1rem; margin-top: 6px; }
+          .book-title { font-size: 0.8rem; margin-top: 6px; }
           .search-add-row { gap: 8px; }
           .add-box { width: 100%; order: 2; }
           .search-box { width: 100%; order: 1; }
@@ -706,9 +716,11 @@ class BookcasePanel extends HTMLElement {
 
     const ratingsBy = { ...(book.ratings_by || {}) };
     const notesBy = { ...(book.notes_by || {}) };
+    const statusesBy = { ...(book.statuses_by || {}) };
     
     ratingsBy[userName] = parseInt(this.querySelector('#edit-rating')?.dataset?.value) || 0;
     notesBy[userName] = v('#edit-notes');
+    statusesBy[userName] = v('#edit-status');
 
     const serviceData = {
       title: v('#edit-title'),
@@ -722,9 +734,10 @@ class BookcasePanel extends HTMLElement {
       count: parseInt(v('#edit-count')) || 1,
       genre: genreStr ? genreStr.split(',').map(s => s.trim()).filter(s => s) : [],
       url: v('#edit-url'),
-      status: v('#edit-status'),
       ratings_by: ratingsBy,
       notes_by: notesBy,
+      statuses_by: statusesBy,
+      condition: v('#edit-condition'),
       description: v('#edit-description'),
       date_read: v('#edit-date-read'),
       lent_to: v('#edit-lent') || null,
@@ -768,7 +781,7 @@ class BookcasePanel extends HTMLElement {
       rating: 0, notes: '', description: '', publisher: '', year: '',
       language: 'Čeština', page_count: 0, count: 1, genre: [],
       url: '', cover_url: '', isbn: '', date_read: '',
-      read_by: [], wishlist_by: []
+      read_by: [], wishlist_by: [], statuses_by: {}, condition: ''
     });
   }
 
@@ -790,6 +803,17 @@ class BookcasePanel extends HTMLElement {
     }
     
     body.dataset[key] = JSON.stringify(list);
+    
+    // Synchronizace s dropdownem statusu
+    const statusSelect = this.querySelector('#edit-status');
+    if (statusSelect) {
+      if (type === 'read') {
+        statusSelect.value = list.includes(userName) ? 'read' : (statusSelect.value === 'read' ? 'to_read' : statusSelect.value);
+      } else if (type === 'wishlist') {
+        statusSelect.value = list.includes(userName) ? 'wishlist' : (statusSelect.value === 'wishlist' ? 'to_read' : statusSelect.value);
+      }
+    }
+
     this.updateToggleButtons();
   }
 
@@ -819,20 +843,27 @@ class BookcasePanel extends HTMLElement {
     
     const rating = (book.ratings_by && book.ratings_by[userName]) || 0;
     const notes = (book.notes_by && book.notes_by[userName]) || "";
+    const status = (book.statuses_by && book.statuses_by[userName]) || book.status || 'to_read';
+    const condition = book.condition || "";
     const genres = Array.isArray(book.genre) ? book.genre.join(', ') : (book.genre || '');
     const isLent = !!(book.lent_to);
 
     // List other users ratings/notes
     let otherUsersHtml = "";
-    if (book.ratings_by || book.notes_by) {
-        const users = new Set([...Object.keys(book.ratings_by || {}), ...Object.keys(book.notes_by || {})]);
+    if (book.ratings_by || book.notes_by || book.statuses_by) {
+        const users = new Set([
+            ...Object.keys(book.ratings_by || {}), 
+            ...Object.keys(book.notes_by || {}),
+            ...Object.keys(book.statuses_by || {})
+        ]);
         users.delete(userName);
         if (users.size > 0) {
             otherUsersHtml = `<div class="user-list" style="margin-top:10px; border-top:1px solid var(--divider-color); padding-top:10px;">`;
             users.forEach(u => {
                 const uRating = book.ratings_by?.[u] ? '★'.repeat(book.ratings_by[u]) : '';
                 const uNote = book.notes_by?.[u] || '';
-                otherUsersHtml += `<div style="margin-bottom:5px;"><b>${u}:</b> <span style="color:#ffca28;">${uRating}</span> ${uNote}</div>`;
+                const uStatus = book.statuses_by?.[u] ? ` (${statusLabels[book.statuses_by[u]] || ''})` : '';
+                otherUsersHtml += `<div style="margin-bottom:5px;"><b>${u}:</b> <span style="color:#ffca28;">${uRating}</span> ${uNote}${uStatus}</div>`;
             });
             otherUsersHtml += `</div>`;
         }
@@ -927,7 +958,7 @@ class BookcasePanel extends HTMLElement {
             </div>
           </div>
           <div class="form-group">
-            <label>Stav knihy</label>
+            <label>Status čtení</label>
             <select id="edit-status">
               <option value="to_read" ${book.status === 'to_read' ? 'selected' : ''}>📗 Máme v knihovně</option>
               <option value="reading" ${book.status === 'reading' ? 'selected' : ''}>📖 Právě čtu</option>
@@ -936,20 +967,31 @@ class BookcasePanel extends HTMLElement {
             </select>
           </div>
         </div>
-        <div class="form-group">
-          <label>Půjčení</label>
-          ${isLent
-            ? `<div style="display:flex; align-items:center; gap:10px;">
-                 <span style="background:#ff9800; color:white; padding:8px 14px; border-radius:8px; font-size:0.85rem; font-weight:600; flex:1;">
-                   📦 ${book.lent_to}${book.lent_until ? ' · do ' + book.lent_until : ''}
-                 </span>
-                 <button class="action-btn" id="btn-return" style="background:#4caf50; padding:8px 16px; font-size:0.85rem;">✓ Vráceno</button>
-               </div>`
-            : `<div class="form-row cols-2" style="margin:0;">
-                 <input type="text" id="edit-lent" class="text-input" value="" placeholder="Komu půjčit...">
-                 <input type="date" id="edit-lent-until" class="text-input" value="" placeholder="Do kdy...">
-               </div>`
-          }
+        <div class="form-row cols-2">
+          <div class="form-group">
+            <label>Stav fyzické knihy</label>
+            <select id="edit-condition">
+              <option value="" ${condition === '' ? 'selected' : ''}>-- neuvedeno --</option>
+              <option value="nová" ${condition === 'nová' ? 'selected' : ''}>✨ Nová</option>
+              <option value="opotřebená" ${condition === 'opotřebená' ? 'selected' : ''}>📖 Opotřebená</option>
+              <option value="zničená" ${condition === 'zničená' ? 'selected' : ''}>⚠️ Zničená</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Půjčení</label>
+            ${isLent
+              ? `<div style="display:flex; align-items:center; gap:10px;">
+                   <span style="background:#ff9800; color:white; padding:8px 14px; border-radius:8px; font-size:0.85rem; font-weight:600; flex:1;">
+                     📦 ${book.lent_to}${book.lent_until ? ' · do ' + book.lent_until : ''}
+                   </span>
+                   <button class="action-btn" id="btn-return" style="background:#4caf50; padding:8px 16px; font-size:0.85rem;">✓ Vráceno</button>
+                 </div>`
+              : `<div class="form-row cols-2" style="margin:0;">
+                   <input type="text" id="edit-lent" class="text-input" value="" placeholder="Komu půjčit...">
+                   <input type="date" id="edit-lent-until" class="text-input" value="" placeholder="Do kdy...">
+                 </div>`
+            }
+          </div>
         </div>
 
         <div class="section-title">📝 Poznámky</div>
@@ -972,6 +1014,27 @@ class BookcasePanel extends HTMLElement {
 
     body.querySelector('#toggle-read').onclick = () => this.toggleUser(book.id, 'read');
     body.querySelector('#toggle-wish').onclick = () => this.toggleUser(book.id, 'wish');
+
+    const statusSelect = body.querySelector('#edit-status');
+    if (statusSelect) {
+      statusSelect.onchange = (e) => {
+        const val = e.target.value;
+        let readList = JSON.parse(body.dataset.readBy || '[]');
+        let wishList = JSON.parse(body.dataset.wishlistBy || '[]');
+        
+        // Odstraníme uživatele z obou seznamů
+        readList = readList.filter(u => u !== userName);
+        wishList = wishList.filter(u => u !== userName);
+        
+        // Přidáme ho do relevantního seznamu
+        if (val === 'read') readList.push(userName);
+        if (val === 'wishlist') wishList.push(userName);
+        
+        body.dataset.readBy = JSON.stringify(readList);
+        body.dataset.wishlistBy = JSON.stringify(wishList);
+        this.updateToggleButtons();
+      };
+    }
 
     const starContainer = body.querySelector('#edit-rating');
     starContainer.querySelectorAll('span').forEach(star => {
@@ -1035,15 +1098,11 @@ class BookcasePanel extends HTMLElement {
     }
 
     if (this._filter !== 'all') {
-      if (this._filter === 'lent') {
-        books = books.filter(b => b.lent_to);
-      } else if (this._filter === 'wishlist') {
-        books = books.filter(b => b.status === 'wishlist' || (Array.isArray(b.wishlist_by) && b.wishlist_by.includes(userName)));
-      } else if (this._filter === 'read') {
-        books = books.filter(b => Array.isArray(b.read_by) && b.read_by.includes(userName));
-      } else {
-        books = books.filter(b => b.status === this._filter);
-      }
+      books = books.filter(b => {
+        if (this._filter === 'lent') return b.lent_to;
+        const userStatus = (b.statuses_by && b.statuses_by[userName]) || b.status || 'to_read';
+        return userStatus === this._filter;
+      });
     }
 
     // Sort books
@@ -1079,6 +1138,7 @@ class BookcasePanel extends HTMLElement {
     this.content.innerHTML = '';
     
     books.forEach(book => {
+      const userStatus = (book.statuses_by && book.statuses_by[userName]) || book.status || 'to_read';
       const card = document.createElement('div');
       card.className = 'book-card';
       card.onclick = () => { this._manualMode = false; this.openDetail(book); };
@@ -1091,12 +1151,12 @@ class BookcasePanel extends HTMLElement {
           <img src="/bookcase_static/covers/${book.id}.jpg" onerror="this.src='${book.cover_url || ''}'; this.onerror=function(){this.style.display='none'; this.nextElementSibling.style.display='flex';};">
           <div class="cover-fallback" style="display:none;">
             <span style="font-size: 24px; margin-bottom: 5px;">📖</span>
-            <div style="font-weight:bold; overflow:hidden; text-overflow:ellipsis; width:100%; max-height: 40px;">${book.title}</div>
+            <div style="font-weight:bold; width:100%;">${this._formatTitle(book)}</div>
           </div>
-          <div class="status-badge" style="background:${statusColors[book.status] || '#666'}">${statusLabels[book.status] || ''}</div>
+          <div class="status-badge" style="background:${statusColors[userStatus] || '#666'}">${statusLabels[userStatus] || ''}</div>
           ${book.lent_to ? `<div class="lent-badge">📦 ${book.lent_to}${book.lent_until ? ' · do ' + book.lent_until : ''}</div>` : ''}
         </div>
-        <div class="book-title">${book.title}</div>
+        <div class="book-title">${this._formatTitle(book)}</div>
         <div style="font-size:0.75rem; color:var(--secondary-text-color); margin-top:4px; display:flex; justify-content:space-between;">
           <span>${book.authors ? book.authors[0] : ''}</span>
           ${(book.ratings_by && book.ratings_by[userName]) ? `<span style="color:#ffca28;">${'★'.repeat(book.ratings_by[userName])}</span>` : ''}

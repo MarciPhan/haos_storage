@@ -149,6 +149,12 @@ def _merge_results(isbn: str, results: list[dict]) -> dict:
         if not merged["url"] and res.get("url"):
             merged["url"] = res["url"]
 
+    # Pokud titul obsahuje dvojtečku a podnázev je prázdný, rozdělíme ho
+    if merged["title"] and ":" in merged["title"] and not merged["subtitle"]:
+        parts = merged["title"].split(":", 1)
+        merged["title"] = parts[0].strip()
+        merged["subtitle"] = parts[1].strip()
+
     # Obálka – prioritizace podle kvality zdroje
     cover_candidates = []
     for res in results:

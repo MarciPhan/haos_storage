@@ -59,6 +59,34 @@ async def async_setup_entry(hass: HomeAssistant, entry):
     store = Store(hass, 1, "bookcase_data")
     data = await store.async_load() or {"books": {}}
 
+    # Migrace stávajících dat
+    migrated = False
+    for book in data.get("books", {}).values():
+        # 1. Migrace titulu
+        if book.get("title") and ":" in book["title"] and not book.get("subtitle"):
+            parts = book["title"].split(":", 1)
+            book["title"] = parts[0].strip()
+            book["subtitle"] = parts[1].strip()
+            migrated = True
+        
+        # 2. Migrace stavu fyzické knihy (změna z personalizovaného na globální)
+        if "condition" not in book:
+            # Pokud existoval starý conditions_by z minulé (chybné) verze, vezmeme první hodnotu
+            old_conds = book.pop("conditions_by", {})
+            book["condition"] = next(iter(old_conds.values()), "") if old_conds else ""
+            migrated = True
+            
+        # 3. Inicializace personalizovaného statusu čtení
+        if "statuses_by" not in book:
+            book["statuses_by"] = {}
+            # Pokud má kniha globální status, použijeme ho jako základ (volitelné)
+            # Ale raději necháme prázdné a budeme řešit default v UI
+            migrated = True
+    
+    if migrated:
+        await store.async_save(data)
+        _LOGGER.info("Bookcase: Data migration completed (titles split by colon)")
+
     async def handle_add_book(call: ServiceCall):
         isbn = re.sub(r'[- ]', '', call.data.get("isbn", ""))
         if not isbn:
@@ -113,8 +141,10 @@ async def async_setup_entry(hass: HomeAssistant, entry):
             "url": book_data.get("url", "") if book_data else "",
             "count": 1,
             "status": STATUS_TO_READ,
+            "condition": "",
             "ratings_by": {},
             "notes_by": {},
+            "statuses_by": {},
             "date_read": "",
             "added_at": dt_util.now().isoformat(),
             "read_by": [],
@@ -145,8 +175,10 @@ async def async_setup_entry(hass: HomeAssistant, entry):
             "genre": call.data.get("genre", []),
             "url": call.data.get("url", ""),
             "count": call.data.get("count", 1),
+            "condition": call.data.get("condition", ""),
             "ratings_by": {},
             "notes_by": {},
+            "statuses_by": {},
             "date_read": call.data.get("date_read", ""),
             "added_at": dt_util.now().isoformat(),
             "read_by": [],
@@ -163,7 +195,7 @@ async def async_setup_entry(hass: HomeAssistant, entry):
 
         old_lent_to = data["books"][book_id].get("lent_to")
         updates = {}
-        for key in ["status", "is_read", "date_read", "ratings_by", "notes_by",
+        for key in ["status", "is_read", "date_read", "ratings_by", "notes_by", "statuses_by", "condition",
                     "description", "lent_to", "lent_until", "count", "genre",
                     "read_by", "wishlist_by", "title", "subtitle", "authors",
                     "cover_url", "publisher", "year", "language", "page_count",
@@ -261,7 +293,7 @@ async def async_setup_entry(hass: HomeAssistant, entry):
                 frontend_url_path="bookcase",
                 config={"_panel_custom": {
                     "name": "bookcase-panel",
-                    "module_url": "/bookcase_static/panel.js?v=6.2"
+                    "module_url": "/bookcase_static/panel.js?v=6.7"
                 }},
                 require_admin=False,
             )
