@@ -801,13 +801,20 @@ class BookcasePanel extends HTMLElement {
       };
     });
 
-    // Vráceno button
+    // Vráceno button – optimistic UI
     const returnBtn = body.querySelector('#btn-return');
     if (returnBtn) {
       returnBtn.onclick = () => {
-        this._hass.callService('bookcase', 'update_book', { book_id: book.id, lent_to: null, lent_until: null });
+        // 1. Okamžitě zavřít modál
         this.modal.classList.remove('open');
+        // 2. Optimisticky smazat půjčení z lokálního stavu
+        book.lent_to = null;
+        book.lent_until = null;
+        // 3. Překreslit karty ihned (badge zmizí)
+        this.render();
         this.showToast('Kniha vrácena!', 'success');
+        // 4. Zavolat backend na pozadí
+        this._hass.callService('bookcase', 'update_book', { book_id: book.id, lent_to: null, lent_until: null });
       };
     }
 
