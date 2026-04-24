@@ -13,7 +13,7 @@ _LOGGER = logging.getLogger(__name__)
 
 class BookcaseCoverView(HomeAssistantView):
     """View to serve and cache book covers."""
-    url = "/bookcase_covers/{book_id}.jpg"
+    url = "/bookcase_static/covers/{book_id}.jpg"
     name = "api:bookcase:cover"
     requires_auth = False # Veřejně dostupné pro panel
 
@@ -291,13 +291,14 @@ async def async_setup_entry(hass: HomeAssistant, entry):
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = {"books": data["books"]}
     
-    # Registrace statických souborů (JS, obrázky) - používáme unikátní prefix
-    www_path = hass.config.path("custom_components", "bookcase", "www")
+    # Registrace statických souborů (původní funkční metoda)
     try:
-        hass.http.register_static_path("/bookcase_assets", www_path, cache_headers=False)
-        _LOGGER.info("Bookcase: Registered static path /bookcase_assets for %s", www_path)
-    except Exception as e:
-        _LOGGER.debug("Bookcase: Static path /bookcase_assets already registered: %s", e)
+        from homeassistant.components.http import StaticPathConfig
+        await hass.http.async_register_static_paths([
+            StaticPathConfig("/bookcase_static", hass.config.path("custom_components/bookcase/www"), False)
+        ])
+    except:
+        pass
     
     hass.http.register_view(BookcaseCoverView(hass, data["books"]))
         
@@ -311,7 +312,7 @@ async def async_setup_entry(hass: HomeAssistant, entry):
             frontend_url_path="bookcase",
             config={"_panel_custom": {
                 "name": "bookcase-panel",
-                "module_url": "/bookcase_assets/panel.js?v=7.7"
+                "module_url": "/bookcase_static/panel.js?v=7.8"
             }},
             require_admin=False,
         )

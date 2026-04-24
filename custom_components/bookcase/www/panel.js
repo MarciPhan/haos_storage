@@ -889,7 +889,7 @@ class BookcasePanel extends HTMLElement {
 
     body.innerHTML = `
       <div class="modal-left">
-        <img src="/bookcase_covers/${book.id}.jpg" onerror="this.src='${book.cover_url || ''}'; this.onerror=function(){this.style.display='none'; this.nextElementSibling.style.display='flex';};">
+        <img src="/bookcase_static/covers/${book.id}.jpg" onerror="this.src='${book.cover_url || ''}'; this.onerror=function(){this.style.display='none'; this.nextElementSibling.style.display='flex';};">
         <div class="cover-fallback" style="display:none; font-size: 14px;">
           <span style="font-size: 48px; margin-bottom: 10px;">📖</span>
           ${book.title || 'Nová kniha'}
@@ -1185,7 +1185,7 @@ class BookcasePanel extends HTMLElement {
       
       card.innerHTML = `
         <div class="cover-wrapper">
-          <img src="/bookcase_covers/${book.id}.jpg" onerror="this.src='${book.cover_url || ''}'; this.onerror=function(){this.style.display='none'; this.nextElementSibling.style.display='flex';};">
+          <img src="/bookcase_static/covers/${book.id}.jpg" onerror="this.src='${book.cover_url || ''}'; this.onerror=function(){this.style.display='none'; this.nextElementSibling.style.display='flex';};">
           <div class="cover-fallback" style="display:none;">
             <span style="font-size: 24px; margin-bottom: 5px;">📖</span>
             <div style="font-weight:bold; width:100%;">${this._formatTitle(book)}</div>
