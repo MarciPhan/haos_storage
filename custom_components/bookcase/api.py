@@ -49,6 +49,7 @@ async def fetch_book_metadata(hass, isbn: str) -> dict | None:
             _safe_fetch("Open Library", fetch_open_library, session, isbn),
             _safe_fetch("Knihovny.cz", fetch_knihovny_cz, session, isbn),
             _safe_fetch("ObalkyKnih", fetch_obalkyknih_cz, session, isbn),
+            _safe_fetch("Didasko.cz", fetch_didasko_cz, session, isbn),
         ),
         timeout=_TOTAL_TIMEOUT,
     )
@@ -299,14 +300,99 @@ async def fetch_knihovny_cz(session, isbn: str) -> dict | None:
         # Jazyky
         langs = r.get("languages", [])
         language = _normalize_language(langs[0]) if langs else ""
+        
+        publish_date = r.get("publicationDate")
+        publishers = []
+        pages = None
+        
+        # 2. fáze: Získání dodatečných informací (strany, rok, nakladatel) z MARCXML
+        record_id = r.get("id")
+        if record_id:
+            xml_url = f"https://www.knihovny.cz/Record/{record_id}/Export?style=MARCXML"
+            try:
+                async with session.get(xml_url, timeout=5) as xml_resp:
+                    if xml_resp.status == 200:
+                        xml = await xml_resp.text()
+                        
+                        # Rok vydání z MARC 260/264 podpole 'c'
+                        if not publish_date:
+                            year_match = re.search(r'<datafield tag="26[04]".*?>.*?<subfield code="c">.*?(\d{4}).*?</subfield>.*?</datafield>', xml, re.DOTALL)
+                            if year_match:
+                                publish_date = year_match.group(1)
+                                
+                        # Nakladatel z MARC 260/264 podpole 'b'
+                        pub_match = re.search(r'<datafield tag="26[04]".*?>.*?<subfield code="b">([^<]+)</subfield>.*?</datafield>', xml, re.DOTALL)
+                        if pub_match:
+                            pub_clean = pub_match.group(1).strip(" ,:;/")
+                            if pub_clean:
+                                publishers.append(pub_clean)
+                                
+                        # Počet stran z MARC 300 podpole 'a'
+                        pages_match = re.search(r'<datafield tag="300".*?>.*?<subfield code="a">.*?(\d+).*?</subfield>.*?</datafield>', xml, re.DOTALL)
+                        if pages_match:
+                            pages = int(pages_match.group(1))
+            except Exception as e:
+                pass # Nevadí, prostě nemáme dodatečná data
 
         return {
             "title": r.get("title"),
             "authors": list(authors_dict.keys()) if authors_dict else [],
-            "cover_url": f"https://www.knihovny.cz/Cover/Show?id={r.get('id')}&size=large" if r.get("id") else None,
-            "publish_date": r.get("publicationDate"),
-            "publishers": [],
+            "cover_url": f"https://www.knihovny.cz/Cover/Show?id={record_id}&size=large" if record_id else None,
+            "publish_date": publish_date,
+            "publishers": publishers,
+            "pages": pages,
             "language": language,
             "genres": genres[:5],
-            "url": f"https://www.knihovny.cz/Record/{r.get('id')}" if r.get("id") else None,
+            "url": f"https://www.knihovny.cz/Record/{record_id}" if record_id else None,
         }
+
+async def fetch_didasko_cz(session, isbn: str) -> dict | None:
+    """Scrapuje obchod Didasko.cz pro jejich specifické knihy."""
+    url = f"https://didasko.cz/?s={isbn}&post_type=product"
+    async with session.get(url, timeout=_SOURCE_TIMEOUT) as resp:
+        if resp.status != 200: return None
+        text = await resp.text()
+        
+    links = set(re.findall(r'href="(https://didasko.cz/obchod/[^/"]+/)"', text))
+    links = [l for l in links if "feed" not in l and "page" not in l][:5]
+    
+    for link in links:
+        async with session.get(link, timeout=_SOURCE_TIMEOUT) as resp:
+            if resp.status == 200:
+                ptext = await resp.text()
+                
+                # Zkontrolovat, zda ISBN sedí
+                isbn_match = re.search(r'<li class="isbn[^>]+>.*?<span class="attribute-value">([^<]+)</span>', ptext, re.IGNORECASE | re.DOTALL)
+                if not isbn_match: continue
+                found_isbn = re.sub(r'[- ]', '', isbn_match.group(1))
+                if found_isbn != isbn: continue
+                
+                # Máme produkt
+                title_match = re.search(r'<h1 class="product_title entry-title">([^<]+)</h1>', ptext)
+                title = title_match.group(1).replace("&#8211;", "-").strip() if title_match else None
+                
+                img_match = re.search(r'<img[^>]+src="([^"]+)"[^>]*class="[^"]*wp-post-image', ptext)
+                cover_url = img_match.group(1) if img_match else None
+                
+                author_match = re.search(r'<li class="autor[^>]+>.*?<span class="attribute-value">([^<]+)</span>', ptext, re.IGNORECASE | re.DOTALL)
+                author = author_match.group(1).strip() if author_match else None
+                
+                pages_match = re.search(r'<li class="pocet-stran[^>]+>.*?<span class="attribute-value">([^<]+)</span>', ptext, re.IGNORECASE | re.DOTALL)
+                pages = int(pages_match.group(1)) if pages_match else None
+                
+                year_match = re.search(r'<li class="rok-vydani[^>]+>.*?<span class="attribute-value">([^<]+)</span>', ptext, re.IGNORECASE | re.DOTALL)
+                year = year_match.group(1).strip() if year_match else None
+                
+                pub_match = re.search(r'<li class="vydavatel[^>]+>.*?<span class="attribute-value">([^<]+)</span>', ptext, re.IGNORECASE | re.DOTALL)
+                publisher = pub_match.group(1).strip() if pub_match else None
+                
+                return {
+                    "title": title,
+                    "authors": [author] if author else [],
+                    "cover_url": cover_url,
+                    "pages": pages,
+                    "publish_date": year,
+                    "publishers": [publisher] if publisher else [],
+                    "url": link
+                }
+    return None
