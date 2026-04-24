@@ -48,6 +48,7 @@ async def fetch_book_metadata(hass, isbn: str) -> dict | None:
             _safe_fetch("Google Books", fetch_google_books, session, isbn),
             _safe_fetch("Open Library", fetch_open_library, session, isbn),
             _safe_fetch("Knihovny.cz", fetch_knihovny_cz, session, isbn),
+            _safe_fetch("ObalkyKnih", fetch_obalkyknih_cz, session, isbn),
         ),
         timeout=_TOTAL_TIMEOUT,
     )
@@ -153,8 +154,10 @@ def _merge_results(isbn: str, results: list[dict]) -> dict:
         url = res.get("cover_url")
         if url:
             score = 10  # default
-            if "googleapis.com" in url or "books.google" in url:
-                # Google Books má nejspolehlivější obálky
+            if "obalkyknih.cz" in url:
+                score = 110 # ObalkyKnih (české) mají nejvyšší prioritu pro lokální knihy
+            elif "googleapis.com" in url or "books.google" in url:
+                # Google Books má velmi spolehlivé obálky
                 score = 100 if "zoom=1" not in url else 80
             elif "openlibrary.org" in url:
                 score = 70
@@ -206,6 +209,32 @@ async def fetch_google_books(session, isbn: str) -> dict | None:
             "genres": info.get("categories", []),
             "url": info.get("infoLink"),
         }
+
+
+async def fetch_obalkyknih_cz(session, isbn: str) -> dict | None:
+    """Stahuje obálku z HTML obalkyknih.cz (API nefunguje spolehlivě z klienta bez registrace)."""
+    url = f"https://www.obalkyknih.cz/view?isbn={isbn}"
+    async with session.get(url, timeout=_SOURCE_TIMEOUT) as resp:
+        if resp.status != 200:
+            return None
+        text = await resp.text()
+        
+        # Extrahuje link na velkou obálku
+        match = re.search(r'<link\s+rel=["\']previewimage["\']\s+href=["\']([^"\']+)["\']', text, re.IGNORECASE)
+        if match:
+            cover_url = match.group(1)
+            if cover_url.startswith("//"):
+                cover_url = "https:" + cover_url
+            elif cover_url.startswith("/"):
+                cover_url = "https://www.obalkyknih.cz" + cover_url
+            
+            # Pokud našel obálku, vrátíme alespoň cover a title
+            # Můžeme přidat i prázdný zbytek
+            return {
+                "cover_url": cover_url,
+                "title": "Nalezeno v ObálkyKnih" # Tím zabráníme aby funkce vrátila None sice bez validního textu, ale _safe_fetch to zahodí bez titlu
+            }
+        return None
 
 
 async def fetch_open_library(session, isbn: str) -> dict | None:

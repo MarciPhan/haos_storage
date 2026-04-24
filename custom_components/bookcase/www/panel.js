@@ -522,25 +522,60 @@ class BookcasePanel extends HTMLElement {
       }
     }
 
-    try {
-      this._scanner = new Html5Qrcode('scanner-reader');
-      await this._scanner.start(
-        { facingMode: 'environment' },
-        { fps: 10, qrbox: { width: 280, height: 150 }, formatsToSupport: [0, 3, 4] },
-        (decodedText) => {
-          // ISBN nalezeno
-          const isbn = decodedText.replace(/[^0-9X]/gi, '');
-          if (isbn.length >= 10) {
-            this.stopScanner();
-            this.isbnInput.value = isbn;
-            this.handleAdd();
-          }
+    const onScanSuccess = (decodedText) => {
+      const isbn = decodedText.replace(/[^0-9X]/gi, '');
+      if (isbn.length >= 10) {
+        this.stopScanner();
+        this.isbnInput.value = isbn;
+        this.handleAdd();
+      }
+    };
+
+    // 1. POKUS: Živý přenos kamery (funguje pouze na HTTPS nebo localhost)
+    if (window.isSecureContext && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      try {
+        this._scanner = new Html5Qrcode('scanner-reader');
+        const config = { fps: 10, qrbox: { width: 280, height: 150 }, formatsToSupport: [0, 3, 4] };
+        
+        try {
+          await this._scanner.start({ facingMode: 'environment' }, config, onScanSuccess);
+        } catch (errFallback) {
+          await this._scanner.start({ facingMode: 'user' }, config, onScanSuccess).catch(() => {
+            return this._scanner.start({ cameraId: true }, config, onScanSuccess);
+          });
         }
-      );
-    } catch (err) {
-      this.showToast('Kamera není dostupná', 'error');
-      scannerModal.classList.remove('open');
+        return; // Úspěch, konec metody
+      } catch (err) {
+        console.warn('Live stream selhal, zkusíme fallback na focení', err);
+      }
     }
+
+    // 2. FALLBACK (BEZ HTTPS): Otevře nativní systémový foťák
+    this.stopScanner(); // Zavřeme modal, nativní foťák ho nahradí
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.capture = 'environment'; // Vynutí zadní kameru na mobilu
+    
+    input.onchange = async (e) => {
+      if (e.target.files && e.target.files.length > 0) {
+        this.showToast('Zpracovávám fotku...', 'info');
+        scannerModal.classList.add('open');
+        
+        const html5QrCode = new Html5Qrcode('scanner-reader');
+        try {
+          const decodedText = await html5QrCode.scanFile(e.target.files[0], true);
+          onScanSuccess(decodedText);
+        } catch (err) {
+          this.showToast('Čárový kód nebyl na fotce nalezen.', 'error');
+        }
+        html5QrCode.clear();
+        scannerModal.classList.remove('open');
+      }
+    };
+    
+    // Spustí focení
+    input.click();
   }
 
   stopScanner() {
