@@ -4,6 +4,7 @@ import re
 import homeassistant.util.dt as dt_util
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import discovery
+from homeassistant.components.http import StaticPathConfig
 from .const import DOMAIN, STATUS_TO_READ
 from .api import fetch_book_metadata
 
@@ -135,7 +136,9 @@ async def async_setup_entry(hass: HomeAssistant, entry):
     hass.data[DOMAIN][entry.entry_id] = {"books": data["books"]}
     
     if "static_path_registered" not in hass.data[DOMAIN]:
-        hass.http.register_static_path("/bookcase_static", hass.config.path("custom_components/bookcase/www"), False)
+        await hass.http.async_register_static_paths([
+            StaticPathConfig("/bookcase_static", hass.config.path("custom_components/bookcase/www"), False)
+        ])
         
         try:
             from homeassistant.components.frontend import async_register_built_in_panel
