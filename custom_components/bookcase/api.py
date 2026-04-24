@@ -72,18 +72,19 @@ async def fetch_book_metadata(hass, isbn: str) -> dict | None:
 
 async def _safe_fetch(name: str, fn, session, *args) -> dict | None:
     """Wrap a fetch function with timeout and error handling."""
+    # Pro logování použijeme první argument z args (což je obvykle ISBN)
+    query = args[0] if args else "unknown"
     try:
         result = await asyncio.wait_for(fn(session, *args), timeout=_SOURCE_TIMEOUT)
         if result and (result.get("title") or result.get("cover_url")):
-            _LOGGER.debug("Bookcase: %s returned data for ISBN %s", name, isbn)
+            _LOGGER.debug("Bookcase: %s returned data for %s", name, query)
             return result
-        # Zdroj odpověděl ale nic nenašel – to je OK, ne error
         return None
     except asyncio.TimeoutError:
-        _LOGGER.debug("Bookcase: %s timed out for ISBN %s", name, isbn)
+        _LOGGER.debug("Bookcase: %s timed out for %s", name, query)
         return None
     except Exception as err:
-        _LOGGER.debug("Bookcase: %s failed for ISBN %s: %s", name, isbn, err)
+        _LOGGER.debug("Bookcase: %s failed for %s: %s", name, query, err)
         return None
 
 

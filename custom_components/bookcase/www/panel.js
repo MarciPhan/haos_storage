@@ -535,7 +535,7 @@ class BookcasePanel extends HTMLElement {
     this.querySelector('#scanner-close').onclick = () => this.stopScanner();
     this.isbnInput.onkeypress = (e) => { if (e.key === 'Enter') this.handleAdd(); };
     this.searchInput.oninput = (e) => {
-      this._searchQuery = e.target.value.toLowerCase();
+      this._searchQuery = (e.target.value || '').trim().toLowerCase();
       this.render();
     };
 
@@ -1159,7 +1159,8 @@ class BookcasePanel extends HTMLElement {
     if (this._searchQuery) {
       books = books.filter(b => 
         (b.title || '').toLowerCase().includes(this._searchQuery) || 
-        (b.authors && b.authors.some(a => a.toLowerCase().includes(this._searchQuery)))
+        (b.authors && Array.isArray(b.authors) && b.authors.some(a => a && typeof a === 'string' && a.toLowerCase().includes(this._searchQuery))) ||
+        (b.isbn && b.isbn.toLowerCase().includes(this._searchQuery))
       );
     }
 
@@ -1223,8 +1224,9 @@ class BookcasePanel extends HTMLElement {
           ${book.lent_to ? `<div class="lent-badge">📦 ${book.lent_to}${book.lent_until ? ' · do ' + book.lent_until : ''}</div>` : ''}
         </div>
         <div class="book-title">${this._formatTitle(book)}</div>
+        <div class="book-isbn" style="font-size:0.7rem; opacity:0.6; margin-top:2px;">${book.isbn || ''}</div>
         <div style="font-size:0.75rem; color:var(--secondary-text-color); margin-top:4px; display:flex; justify-content:space-between;">
-          <span>${book.authors ? book.authors[0] : ''}</span>
+          <span class="book-author">${(book.authors && book.authors[0]) ? book.authors[0] : ''}</span>
           ${(book.ratings_by && book.ratings_by[userName]) ? `<span style="color:#ffca28;">${'★'.repeat(book.ratings_by[userName])}</span>` : ''}
         </div>
       `;
