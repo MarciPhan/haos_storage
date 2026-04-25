@@ -21,3 +21,7 @@ class SmartPlantLastWateredDate(SmartPlantEntity, DateEntity):
         if dt:
             return dt.date()
         return None
+
+    async def async_set_value(self, value):
+        """Set new date."""
+        await self.coordinator.set_last_watered(value)

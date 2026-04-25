@@ -108,6 +108,16 @@ class SmartPlantCoordinator(DataUpdateCoordinator):
         await self._async_update_options()
         await self.async_request_refresh()
 
+    async def set_last_watered(self, last_watered_date):
+        """Manually set the last watered date."""
+        # Convert date to datetime at midnight
+        dt_at_midnight = datetime.combine(last_watered_date, datetime.min.time())
+        # Make it aware in local timezone
+        self.last_watered = dt_util.as_local(dt_at_midnight)
+        
+        await self._async_update_options()
+        await self.async_request_refresh()
+
     async def set_days_between(self, days):
         """Update the interval."""
         self.days_between_waterings = days
