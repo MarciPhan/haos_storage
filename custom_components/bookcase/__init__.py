@@ -109,15 +109,17 @@ class BookcaseCoverView(HomeAssistantView):
 
         cover_url = book["cover_url"]
         
-        # 3. Stáhneme obálku
+        # 3. Stáhneme obálku s User-Agentem a podporou různých formátů
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(cover_url, timeout=10) as response:
+            async with aiohttp.ClientSession(headers=headers) as session:
+                async with session.get(cover_url, timeout=15) as response:
                     if response.status == 200:
                         content = await response.read()
+                        content_type = response.headers.get("Content-Type", "image/jpeg")
                         with open(file_path, "wb") as f:
                             f.write(content)
-                        return aiohttp.web.Response(body=content, content_type="image/jpeg")
+                        return aiohttp.web.Response(body=content, content_type=content_type)
         except Exception as e:
             _LOGGER.error("Failed to fetch cover from %s: %s", cover_url, e)
 

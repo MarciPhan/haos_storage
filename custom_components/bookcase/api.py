@@ -405,26 +405,30 @@ async def fetch_nkp_cz(session, query: str) -> dict | None:
 
 
 async def fetch_databazeknih_cz(session, query: str) -> dict | None:
-    """Scrapuje Databázi knih (databazeknih.cz)."""
+    """Databazeknih.cz – nejlepší český komunitní web."""
     import urllib.parse
-    encoded_query = urllib.parse.quote(query)
+    # Databáze knih preferuje '+' místo '%20' a vyžaduje User-Agent
+    encoded_query = urllib.parse.quote(query).replace("%20", "+")
     url = f"https://www.databazeknih.cz/search?q={encoded_query}"
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
+    
     try:
-        async with session.get(url, timeout=_SOURCE_TIMEOUT, allow_redirects=True) as resp:
+        async with session.get(url, timeout=_SOURCE_TIMEOUT, headers=headers, allow_redirects=True) as resp:
             if resp.status != 200: return None
             text = await resp.text()
-            # Pokud nás to hodilo rovnou na knihu (přesměrování při přesné shodě)
             final_url = str(resp.url)
             
         if "/knihy/" not in final_url and "/prehled-knihy/" not in final_url:
-            # Jsme na výsledcích hledání – zkusíme vzít první odkaz (podpora absolutních i relativních URL)
+            # Jsme na výsledcích hledání – zkusíme vzít první odkaz
             match = re.search(r'href=["\'](?:https://www.databazeknih.cz)?/((?:prehled-knihy|knihy)/[^"\']+)["\']', text)
             if not match: return None
-            url = match.group(1)
-            async with session.get(url, timeout=_SOURCE_TIMEOUT) as resp:
+            url = "https://www.databazeknih.cz/" + match.group(1)
+            async with session.get(url, timeout=_SOURCE_TIMEOUT, headers=headers) as resp:
                 if resp.status != 200: return None
                 text = await resp.text()
-        
+        else:
+            url = final_url
+
         title_match = re.search(r'<h1[^>]* itemprop="name">([^<]+)</h1>', text)
         if not title_match: title_match = re.search(r'<h1[^>]*>([^<]+)</h1>', text)
         
@@ -432,7 +436,6 @@ async def fetch_databazeknih_cz(session, query: str) -> dict | None:
         desc_match = re.search(r'<p id="short_desc"[^>]*>(.*?)</p>', text, re.DOTALL)
         img_match = re.search(r'<img[^>]+class="kniha_img"[^>]+src="([^"]+)"', text)
         
-        # Detaily v pravém sloupci
         pages = re.search(r'Po\u010det stran:.*?(\d+)', text)
         year = re.search(r'Rok vyd\u00e1n\u00ed:.*?(\d{4})', text)
         publisher = re.search(r'Nakladatelstv\u00ed:.*?<a[^>]+>([^<]+)</a>', text)
@@ -447,7 +450,75 @@ async def fetch_databazeknih_cz(session, query: str) -> dict | None:
             "publish_date": year.group(0) if year else None,
             "publishers": [publisher.group(1).strip()] if publisher else [],
             "isbn": re.sub(r'[- ]', '', isbn_match.group(1)) if isbn_match else None,
-            "url": final_url if "/knihy/" in final_url else url
+            "url": url
+        }
+    except: return None
+
+
+async def fetch_reknihy_cz(session, query: str) -> dict | None:
+    """Reknihy.cz – populární český bazar knih."""
+    import urllib.parse
+    encoded_query = urllib.parse.quote(query)
+    url = f"https://www.reknihy.cz/vyhledavani?q={encoded_query}"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    
+    try:
+        async with session.get(url, timeout=_SOURCE_TIMEOUT, headers=headers) as resp:
+            if resp.status != 200: return None
+            text = await resp.text()
+            
+        match = re.search(r'href=["\'](/kniha/[^"\']+)["\']', text)
+        if not match: return None
+        
+        url = "https://www.reknihy.cz" + match.group(1)
+        async with session.get(url, timeout=_SOURCE_TIMEOUT, headers=headers) as resp:
+            if resp.status != 200: return None
+            text = await resp.text()
+            
+        title = re.search(r'<h1[^>]*>([^<]+)</h1>', text)
+        author = re.search(r'Autor:.*?<a[^>]*>([^<]+)</a>', text, re.DOTALL)
+        img = re.search(r'<img[^>]+class="product-image"[^>]+src="([^"]+)"', text)
+        desc = re.search(r'class="product-description">([^<]+)</div>', text)
+        
+        return {
+            "title": title.group(1).strip() if title else None,
+            "authors": [author.group(1).strip()] if author else [],
+            "description": desc.group(1).strip() if desc else None,
+            "cover_url": img.group(1) if img else None,
+            "url": url
+        }
+    except: return None
+
+
+async def fetch_trhknih_cz(session, query: str) -> dict | None:
+    """TrhKnih.cz – největší český knižní antikvariát."""
+    import urllib.parse
+    encoded_query = urllib.parse.quote(query)
+    url = f"https://www.trhknih.cz/vyhledavat?q={encoded_query}"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    
+    try:
+        async with session.get(url, timeout=_SOURCE_TIMEOUT, headers=headers) as resp:
+            if resp.status != 200: return None
+            text = await resp.text()
+            
+        match = re.search(r'href=["\'](/kniha/[^"\']+)["\']', text)
+        if not match: return None
+        
+        url = "https://www.trhknih.cz" + match.group(1)
+        async with session.get(url, timeout=_SOURCE_TIMEOUT, headers=headers) as resp:
+            if resp.status != 200: return None
+            text = await resp.text()
+            
+        title = re.search(r'<h1[^>]*>([^<]+)</h1>', text)
+        author = re.search(r'Autor:.*?<a[^>]*>([^<]+)</a>', text, re.DOTALL)
+        img = re.search(r'<img[^>]+class="book-cover"[^>]+src="([^"]+)"', text)
+        
+        return {
+            "title": title.group(1).strip() if title else None,
+            "authors": [author.group(1).strip()] if author else [],
+            "cover_url": "https://www.trhknih.cz" + img.group(1) if img else None,
+            "url": url
         }
     except: return None
 
