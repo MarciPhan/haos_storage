@@ -415,8 +415,8 @@ async def fetch_databazeknih_cz(session, query: str) -> dict | None:
             final_url = str(resp.url)
             
         if "/knihy/" not in final_url and "/prehled-knihy/" not in final_url:
-            # Jsme na výsledcích hledání – zkusíme vzít první odkaz
-            match = re.search(r'href=["\'](https://www.databazeknih.cz/(?:prehled-knihy|knihy)/[^"\']+)["\']', text)
+            # Jsme na výsledcích hledání – zkusíme vzít první odkaz (podpora absolutních i relativních URL)
+            match = re.search(r'href=["\'](?:https://www.databazeknih.cz)?/((?:prehled-knihy|knihy)/[^"\']+)["\']', text)
             if not match: return None
             url = match.group(1)
             async with session.get(url, timeout=_SOURCE_TIMEOUT) as resp:
