@@ -128,6 +128,7 @@ async def async_setup_entry(hass: HomeAssistant, entry):
     from homeassistant.helpers.storage import Store
     store = Store(hass, 1, "bookcase_data")
     data = await store.async_load() or {"books": {}}
+    migrated = False
 
     # 4. Sjednocení duplicitních ISBN a inicializace 'active_loans'
     isbn_map = {}
