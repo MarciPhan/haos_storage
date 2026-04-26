@@ -125,10 +125,10 @@ class BookcaseCoverView(HomeAssistantView):
 
 async def async_setup_entry(hass: HomeAssistant, entry):
     """Set up Bookcase from a config entry."""
+    _migrated_flag = False
     from homeassistant.helpers.storage import Store
     store = Store(hass, 1, "bookcase_data")
     data = await store.async_load() or {"books": {}}
-    migrated = False
 
     # 4. Sjednocení duplicitních ISBN a inicializace 'active_loans'
     isbn_map = {}
@@ -149,7 +149,7 @@ async def async_setup_entry(hass: HomeAssistant, entry):
                     "until": book.get("lent_until", ""),
                     "loaned_at": book.get("added_at", dt_util.now().isoformat())
                 })
-            migrated = True
+            _migrated_flag = True
         
         isbn = book.get("isbn")
         if not isbn: continue
@@ -178,13 +178,13 @@ async def async_setup_entry(hass: HomeAssistant, entry):
                     target["read_by"].append(user)
             
             to_delete.append(book_id)
-            migrated = True
+            _migrated_flag = True
 
     for book_id in to_delete:
         del data["books"][book_id]
         _LOGGER.info("Bookcase: Merged duplicate book record %s", book_id)
     
-    if migrated:
+    if _migrated_flag:
         await store.async_save(data)
         _LOGGER.info("Bookcase: Data migration completed (duplicates merged, loans initialized)")
 
