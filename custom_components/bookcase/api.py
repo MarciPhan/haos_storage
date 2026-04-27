@@ -37,7 +37,10 @@ async def fetch_book_metadata(hass, isbn: str) -> dict | None:
     The total operation is capped at _TOTAL_TIMEOUT seconds.
     """
     original_query = isbn.strip()
-    normalized_isbn = re.sub(r'[- ]', '', original_query)
+    if original_query.startswith("http"):
+        normalized_isbn = original_query
+    else:
+        normalized_isbn = re.sub(r'[- ]', '', original_query)
     
     session = async_get_clientsession(hass)
 
@@ -406,10 +409,13 @@ async def fetch_nkp_cz(session, query: str) -> dict | None:
 
 async def fetch_databazeknih_cz(session, query: str) -> dict | None:
     """Databazeknih.cz – nejlepší český komunitní web."""
-    import urllib.parse
-    # Databáze knih preferuje '+' místo '%20' a vyžaduje User-Agent
-    encoded_query = urllib.parse.quote(query).replace("%20", "+")
-    url = f"https://www.databazeknih.cz/search?q={encoded_query}"
+    if query.startswith("http"):
+        url = query
+    else:
+        import urllib.parse
+        # Databáze knih preferuje '+' místo '%20' a vyžaduje User-Agent
+        encoded_query = urllib.parse.quote(query).replace("%20", "+")
+        url = f"https://www.databazeknih.cz/search?q={encoded_query}"
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
     
     try:

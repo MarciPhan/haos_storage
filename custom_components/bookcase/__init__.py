@@ -196,9 +196,11 @@ async def async_setup_entry(hass: HomeAssistant, entry):
             return
 
         # Normalizované ISBN pro kontrolu duplicit (odstranění mezer a pomlček)
-        normalized_query = re.sub(r'[- ]', '', query) if any(c.isdigit() for c in query) else query
+        if query.startswith("http"):
+            normalized_query = query
+        else:
+            normalized_query = re.sub(r'[- ]', '', query) if any(c.isdigit() for c in query) else query
 
-        # Kontrola duplicitního ISBN – pokud už ji máme, jen navýšíme počet
         existing_id = None
         for bid, existing in data["books"].items():
             if existing.get("isbn") == normalized_query:
@@ -273,18 +275,18 @@ async def async_setup_entry(hass: HomeAssistant, entry):
             "page_count": call.data.get("page_count", 0),
             "cover_url": call.data.get("cover_url", ""),
             "status": call.data.get("status", STATUS_TO_READ),
+            "condition": call.data.get("condition", ""),
+            "ratings_by": call.data.get("ratings_by", {}),
+            "notes_by": call.data.get("notes_by", {}),
+            "statuses_by": call.data.get("statuses_by", {}),
             "description": call.data.get("description", ""),
             "genre": call.data.get("genre", []),
             "url": call.data.get("url", ""),
             "count": call.data.get("count", 1),
-            "condition": call.data.get("condition", ""),
-            "ratings_by": {},
-            "notes_by": {},
-            "statuses_by": {},
             "date_read": call.data.get("date_read", ""),
             "added_at": dt_util.now().isoformat(),
-            "read_by": [],
-            "wishlist_by": []
+            "read_by": call.data.get("read_by", []),
+            "wishlist_by": call.data.get("wishlist_by", [])
         }
         data["books"][book_id] = new_book
         await store.async_save(data)
@@ -307,6 +309,17 @@ async def async_setup_entry(hass: HomeAssistant, entry):
                     "year", "language", "page_count", "url", "isbn"] + merge_keys:
             if key in call.data:
                 val = call.data[key]
+                
+                # Pokud se mění cover_url, smažeme lokální cache
+                if key == "cover_url" and val != book.get("cover_url"):
+                    cover_path = os.path.join(os.path.dirname(__file__), "www", "covers", f"{book_id}.jpg")
+                    if os.path.exists(cover_path):
+                        try:
+                            os.remove(cover_path)
+                            _LOGGER.debug("Bookcase: Deleted cached cover for %s due to URL change", book_id)
+                        except Exception as e:
+                            _LOGGER.error("Bookcase: Failed to delete cached cover %s: %s", cover_path, e)
+
                 if key in merge_keys and isinstance(val, dict):
                     # Inteligentní merge: aktualizujeme pouze klíče (uživatele) přítomné v požadavku
                     if key not in book or not isinstance(book[key], dict):
