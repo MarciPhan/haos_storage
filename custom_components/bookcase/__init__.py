@@ -94,6 +94,39 @@ class BookcaseCoverView(HomeAssistantView):
         if not os.path.exists(self.cover_dir):
             os.makedirs(self.cover_dir, exist_ok=True)
 
+    async def post(self, request, book_id):
+        """Upload a custom cover."""
+        try:
+            reader = await request.multipart()
+            field = await reader.next()
+            if field.name != 'file':
+                return aiohttp.web.Response(status=400, text="Expected 'file' field")
+            
+            file_path = os.path.join(self.cover_dir, f"{book_id}.jpg")
+            
+            # Přečteme data a uložíme
+            size = 0
+            with open(file_path, "wb") as f:
+                while True:
+                    chunk = await field.read_chunk()
+                    if not chunk:
+                        break
+                    size += len(chunk)
+                    f.write(chunk)
+            
+            _LOGGER.info("Bookcase: Uploaded custom cover for %s (%d bytes)", book_id, size)
+            
+            # Pokud kniha nemá žádné cover_url nebo má staré, nastavíme jí lokální odkaz
+            if book_id in self.books:
+                # Vynutíme aktualizaci cover_url aby se projevila změna
+                self.books[book_id]["cover_url"] = f"/bookcase_static/covers/{book_id}.jpg?v={size}"
+            
+            self.hass.bus.async_fire("bookcase_updated")
+            return aiohttp.web.Response(status=200, text="OK")
+        except Exception as e:
+            _LOGGER.error("Bookcase: Upload failed for %s: %s", book_id, e)
+            return aiohttp.web.Response(status=500, text=str(e))
+
     async def get(self, request, book_id):
         """Fetch and serve the cover."""
         file_path = os.path.join(self.cover_dir, f"{book_id}.jpg")

@@ -313,9 +313,10 @@ class BookcasePanel extends HTMLElement {
           width: 300px; flex-shrink: 0;
           background: var(--secondary-background-color);
           position: relative;
-          display: flex; align-items: center; justify-content: center;
+          display: flex; flex-direction: column; align-items: center; justify-content: center;
+          padding: 20px;
         }
-        .modal-left img { width: 100%; height: 100%; object-fit: cover; }
+        .modal-left img { width: 100%; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
         .modal-right {
           padding: 28px 30px;
           flex-grow: 1;
@@ -430,7 +431,7 @@ class BookcasePanel extends HTMLElement {
           .add-box { width: 100%; order: 2; }
           .search-box { width: 100%; order: 1; }
           .modal-body { flex-direction: column; }
-          .modal-left { width: 100%; height: 250px; }
+          .modal-left { width: 100%; height: auto; }
           .modal-right { padding: 20px; }
           .form-row.cols-3, .form-row.cols-2 { grid-template-columns: 1fr; }
           .toggle-row { flex-direction: column; }
@@ -442,7 +443,7 @@ class BookcasePanel extends HTMLElement {
           align-items:center; justify-content:center; flex-direction:column;
         }
         #scanner-modal.open { display:flex; }
-        #scanner-reader { width:min(400px, 90vw); }
+        #scanner-reader { width:min(400px, 90vw); min-height: 250px; background: #000; border-radius: 8px; overflow: hidden; }
         #scanner-close {
           position:absolute; top:20px; right:20px;
           width:44px; height:44px; border-radius:50%; background:rgba(255,255,255,0.2);
@@ -591,7 +592,12 @@ class BookcasePanel extends HTMLElement {
     if (window.isSecureContext && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
       try {
         this._scanner = new Html5Qrcode('scanner-reader');
-        const config = { fps: 10, qrbox: { width: 280, height: 150 }, formatsToSupport: [0, 3, 4] };
+        // Přidána podpora pro EAN-13 (8), EAN-8 (7), Code 128 (5) a další pro ISBN
+        const config = { 
+          fps: 15, 
+          qrbox: { width: 280, height: 150 }, 
+          formatsToSupport: [0, 5, 7, 8, 14, 15] 
+        };
         
         try {
           await this._scanner.start({ facingMode: 'environment' }, config, onScanSuccess);
@@ -623,7 +629,6 @@ class BookcasePanel extends HTMLElement {
         
         const html5QrCode = new Html5Qrcode('scanner-reader');
         try {
-          // Zvýšíme šanci na úspěch povolením experimentálního režimu a lepším skenováním
           const decodedText = await html5QrCode.scanFile(e.target.files[0], false);
           onScanSuccess(decodedText);
         } catch (err) {
@@ -635,7 +640,6 @@ class BookcasePanel extends HTMLElement {
       }
     };
     
-    // Spustí focení
     input.click();
   }
 
@@ -652,7 +656,6 @@ class BookcasePanel extends HTMLElement {
     const isbn = this.isbnInput.value.trim();
     if (!isbn) return;
 
-    // Povolíme rychlé skenování více ISBN po sobě
     this._pendingAdds++;
     this._loading = true;
     this.updateButtons();
@@ -661,7 +664,6 @@ class BookcasePanel extends HTMLElement {
     this.isbnInput.focus();
     this.showToast(`Hledám ISBN: ${isbn}…`, 'success');
 
-    // Safety timeout – po 15s resetujeme loading stav
     setTimeout(() => {
       if (this._pendingAdds > 0) {
         this._pendingAdds = 0;
@@ -672,7 +674,6 @@ class BookcasePanel extends HTMLElement {
   }
 
   showToast(message, type = 'success') {
-    // Odstraníme předchozí toast pokud existuje
     const old = this.querySelector('.toast');
     if (old) old.remove();
 
@@ -681,7 +682,6 @@ class BookcasePanel extends HTMLElement {
     toast.textContent = message;
     this.appendChild(toast);
 
-    // Trigger animation
     requestAnimationFrame(() => {
       toast.classList.add('visible');
     });
@@ -697,7 +697,6 @@ class BookcasePanel extends HTMLElement {
     const addSpinner = this.querySelector('#add-spinner');
     const addText = this.querySelector('#add-text');
     if (addBtn) {
-      // Při ISBN přidávání NEblokujeme tlačítko – umožníme rychlé skenování
       addBtn.disabled = false;
       addSpinner.style.display = this._pendingAdds > 0 ? 'block' : 'none';
       addText.textContent = this._pendingAdds > 0 ? `(${this._pendingAdds})` : 'ISBN';
@@ -725,10 +724,10 @@ class BookcasePanel extends HTMLElement {
     if (specificUpdates) {
       Object.assign(serviceData, specificUpdates);
     } else {
-      // Plné uložení (z tlačítka)
       const v = id => (this.querySelector(id)?.value ?? '').trim();
-      const readBy = JSON.parse(this.querySelector('#modal-body').dataset.readBy || '[]');
-      const wishlistBy = JSON.parse(this.querySelector('#modal-body').dataset.wishlistBy || '[]');
+      const body = this.querySelector('#modal-body');
+      const readBy = JSON.parse(body.dataset.readBy || '[]');
+      const wishlistBy = JSON.parse(body.dataset.wishlistBy || '[]');
       const genreStr = v('#edit-genre');
 
       Object.assign(serviceData, {
@@ -749,30 +748,15 @@ class BookcasePanel extends HTMLElement {
         condition: v('#edit-condition'),
         description: v('#edit-description'),
         date_read: v('#edit-date-read'),
-        lent_to: v('#edit-lent') || null,
-        lent_until: v('#edit-lent-until') || null,
         read_by: readBy,
         wishlist_by: wishlistBy,
       });
-    }
-
-    // Optimistická aktualizace lokálního stavu
-    const state = this._hass.states['sensor.bookcase_total_books'];
-    const book = state?.attributes.books.find(b => b.id === bookId);
-    if (book) {
-      for (let key in serviceData) {
-        if (key === 'book_id') continue;
-        const val = serviceData[key];
-        if (typeof val === 'object' && val !== null && !Array.isArray(val)) {
-            // Merge pro slovníky (ratings_by atd.)
-            book[key] = { ...(book[key] || {}), ...val };
-        } else {
-            book[key] = val;
-        }
+      
+      const lentInput = this.querySelector('#edit-lent');
+      if (lentInput) {
+          serviceData.lent_to = lentInput.value || null;
+          serviceData.lent_until = this.querySelector('#edit-lent-until')?.value || null;
       }
-      // Synchronizace hlavního statusu pro render
-      if (serviceData.statuses_by?.[userName]) book.status = serviceData.statuses_by[userName];
-      this.render();
     }
 
     if (this._manualMode) {
@@ -781,7 +765,6 @@ class BookcasePanel extends HTMLElement {
       this._hass.callService('bookcase', 'update_book', serviceData);
     }
 
-    // Modal zavíráme jen při plném uložení nebo manuálním přidání
     if (!specificUpdates || this._manualMode) {
       setTimeout(() => { this.modal.classList.remove('open'); }, 400);
     }
@@ -789,18 +772,9 @@ class BookcasePanel extends HTMLElement {
 
   deleteBook(bookId) {
     if (confirm('Opravdu chcete tuto knihu smazat?')) {
-      this._loading = true;
-      this.updateButtons();
-      
-      // OPTIMISTIC DELETE: 
-      // 1. Hide modal
       this.modal.classList.remove('open');
-      // 2. Add to optimistic deleted set
       this._optimisticDeleted.add(bookId);
-      // 3. Re-render immediately
       this.render();
-      
-      // 4. Call server in background
       this._hass.callService('bookcase', 'delete_book', { book_id: bookId });
     }
   }
@@ -808,6 +782,7 @@ class BookcasePanel extends HTMLElement {
   openManualAdd() {
     this._manualMode = true;
     this.openDetail({
+      id: 'manual-' + Date.now(),
       title: '', subtitle: '', authors: [], status: 'to_read',
       rating: 0, notes: '', description: '', publisher: '', year: '',
       language: 'Čeština', page_count: 0, count: 1, genre: [],
@@ -835,7 +810,6 @@ class BookcasePanel extends HTMLElement {
     
     body.dataset[key] = JSON.stringify(list);
     
-    // Synchronizace s dropdownem statusu
     const statusSelect = this.querySelector('#edit-status');
     if (statusSelect) {
       if (type === 'read') {
@@ -846,7 +820,6 @@ class BookcasePanel extends HTMLElement {
     }
 
     this.updateToggleButtons();
-    // Auto-save on toggle
     this.saveBook(bookId, { 
       read_by: list, 
       wishlist_by: JSON.parse(body.dataset.wishlistBy || '[]'),
@@ -886,7 +859,6 @@ class BookcasePanel extends HTMLElement {
     const genres = Array.isArray(book.genre) ? book.genre.join(', ') : (book.genre || '');
     const isLent = !!(book.lent_to);
 
-    // List other users ratings/notes
     let otherUsersHtml = "";
     if (book.ratings_by || book.notes_by || book.statuses_by) {
         const users = new Set([
@@ -914,9 +886,10 @@ class BookcasePanel extends HTMLElement {
           <span style="font-size: 48px; margin-bottom: 10px;">📖</span>
           ${book.title || 'Nová kniha'}
         </div>
+        <button id="upload-cover-btn" class="action-btn" style="margin-top:15px; width:100%; background:var(--secondary-text-color); font-size:0.8rem;">📷 Nahrát vlastní fotku</button>
+        <input type="file" id="cover-upload-input" style="display:none;" accept="image/*">
       </div>
       <div class="modal-right">
-
         <div class="section-title">📚 Základní informace</div>
         <div class="form-group">
           <label>Název</label>
@@ -998,10 +971,10 @@ class BookcasePanel extends HTMLElement {
           <div class="form-group">
             <label>Status čtení</label>
             <select id="edit-status">
-              <option value="to_read" ${book.status === 'to_read' ? 'selected' : ''}>📗 Máme v knihovně</option>
-              <option value="reading" ${book.status === 'reading' ? 'selected' : ''}>📖 Právě čtu</option>
-              <option value="read" ${book.status === 'read' ? 'selected' : ''}>✅ Přečteno</option>
-              <option value="wishlist" ${book.status === 'wishlist' ? 'selected' : ''}>💫 Wishlist</option>
+              <option value="to_read" ${status === 'to_read' ? 'selected' : ''}>📗 Máme v knihovně</option>
+              <option value="reading" ${status === 'reading' ? 'selected' : ''}>📖 Právě čtu</option>
+              <option value="read" ${status === 'read' ? 'selected' : ''}>✅ Přečteno</option>
+              <option value="wishlist" ${status === 'wishlist' ? 'selected' : ''}>💫 Wishlist</option>
             </select>
           </div>
         </div>
@@ -1059,63 +1032,40 @@ class BookcasePanel extends HTMLElement {
         const val = e.target.value;
         let readList = JSON.parse(body.dataset.readBy || '[]');
         let wishList = JSON.parse(body.dataset.wishlistBy || '[]');
-        
-        // Odstraníme uživatele z obou seznamů
         readList = readList.filter(u => u !== userName);
         wishList = wishList.filter(u => u !== userName);
-        
-        // Přidáme ho do relevantního seznamu
         if (val === 'read') readList.push(userName);
         if (val === 'wishlist') wishList.push(userName);
-        
         body.dataset.readBy = JSON.stringify(readList);
         body.dataset.wishlistBy = JSON.stringify(wishList);
         this.updateToggleButtons();
-        // Auto-save on status change (partial)
-        this.saveBook(book.id, { 
-          statuses_by: { [userName]: val },
-          read_by: readList,
-          wishlist_by: wishList
-        });
+        this.saveBook(book.id, { statuses_by: { [userName]: val }, read_by: readList, wishlist_by: wishList });
       };
     }
 
-    const starContainer = body.querySelector('#edit-rating');
-    starContainer.querySelectorAll('span').forEach(star => {
+    body.querySelectorAll('#edit-rating span').forEach(star => {
       star.onclick = () => {
         const n = parseInt(star.dataset.n);
-        starContainer.dataset.value = n;
-        starContainer.querySelectorAll('span').forEach(s => {
-          s.innerText = parseInt(s.dataset.n) <= n ? '★' : '☆';
-        });
-        // Auto-save on rating change (partial)
+        body.querySelector('#edit-rating').dataset.value = n;
+        body.querySelectorAll('#edit-rating span').forEach(s => s.innerText = parseInt(s.dataset.n) <= n ? '★' : '☆');
         this.saveBook(book.id, { ratings_by: { [userName]: n } });
       };
     });
 
     const conditionSelect = body.querySelector('#edit-condition');
-    if (conditionSelect) {
-      conditionSelect.onchange = () => this.saveBook(book.id, { condition: conditionSelect.value });
-    }
+    if (conditionSelect) conditionSelect.onchange = () => this.saveBook(book.id, { condition: conditionSelect.value });
 
     const notesArea = body.querySelector('#edit-notes');
-    if (notesArea) {
-      notesArea.onblur = () => this.saveBook(book.id, { notes_by: { [userName]: notesArea.value.trim() } });
-    }
+    if (notesArea) notesArea.onblur = () => this.saveBook(book.id, { notes_by: { [userName]: notesArea.value.trim() } });
 
-    // Vráceno button – optimistic UI
     const returnBtn = body.querySelector('#btn-return');
     if (returnBtn) {
       returnBtn.onclick = () => {
-        // 1. Okamžitě zavřít modál
         this.modal.classList.remove('open');
-        // 2. Optimisticky smazat půjčení z lokálního stavu
         book.lent_to = null;
         book.lent_until = null;
-        // 3. Překreslit karty ihned (badge zmizí)
         this.render();
         this.showToast('Kniha vrácena!', 'success');
-        // 4. Zavolat backend na pozadí
         this._hass.callService('bookcase', 'update_book', { book_id: book.id, lent_to: null, lent_until: null });
       };
     }
@@ -1132,30 +1082,60 @@ class BookcasePanel extends HTMLElement {
             };
         }
     }
+
+    const uploadBtn = body.querySelector('#upload-cover-btn');
+    const uploadInput = body.querySelector('#cover-upload-input');
+    if (uploadBtn && uploadInput) {
+      uploadBtn.onclick = () => uploadInput.click();
+      uploadInput.onchange = async (e) => {
+        if (e.target.files && e.target.files[0]) {
+          const file = e.target.files[0];
+          const formData = new FormData();
+          formData.append('file', file);
+          try {
+            this.showToast('Nahrávám obálku...', 'info');
+            const response = await fetch(`/bookcase_static/covers/${book.id}.jpg`, {
+              method: 'POST',
+              body: formData
+            });
+            if (response.ok) {
+              this.showToast('Obálka byla nahrána', 'success');
+              const img = body.querySelector('.modal-left img');
+              if (img) {
+                img.style.display = 'block';
+                img.src = `/bookcase_static/covers/${book.id}.jpg?v=${Date.now()}`;
+                const fallback = body.querySelector('.cover-fallback');
+                if (fallback) fallback.style.display = 'none';
+              }
+            } else {
+              this.showToast('Nahrávání selhalo', 'error');
+            }
+          } catch (err) {
+            console.error('Upload error:', err);
+            this.showToast('Chyba při nahrávání', 'error');
+          }
+        }
+      };
+    }
+
     this.updateToggleButtons();
     this.modal.classList.add('open');
   }
 
   render() {
     if (!this._hass) return;
-    
     let state = this._hass.states['sensor.bookcase_total_books'];
     if (!state) {
       const sensorId = Object.keys(this._hass.states).find(s => s.startsWith('sensor.bookcase_') && this._hass.states[s].attributes && this._hass.states[s].attributes.books);
       if (sensorId) state = this._hass.states[sensorId];
     }
-
     if (!state || !state.attributes || !state.attributes.books) {
       if (this.querySelector('#stats')) this.querySelector('#stats').innerText = 'Načítám data...';
       return;
     }
-
     let books = state.attributes.books;
     const userName = this._hass.user ? (this._hass.user.name || this._hass.user.id || 'Uživatel') : 'Uživatel';
-    
-    // Filter out optimistic deletions
     books = books.filter(b => !this._optimisticDeleted.has(b.id));
-
     if (this._searchQuery) {
       books = books.filter(b => 
         (b.title || '').toLowerCase().includes(this._searchQuery) || 
@@ -1163,7 +1143,6 @@ class BookcasePanel extends HTMLElement {
         (b.isbn && b.isbn.toLowerCase().includes(this._searchQuery))
       );
     }
-
     if (this._filter !== 'all') {
       books = books.filter(b => {
         if (this._filter === 'lent') return b.lent_to;
@@ -1171,16 +1150,13 @@ class BookcasePanel extends HTMLElement {
         return userStatus === this._filter;
       });
     }
-
-    // Sort books
     books.sort((a, b) => {
       let valA, valB;
       const userRating = b => (b.ratings_by && b.ratings_by[userName]) || 0;
-
       if (this._sortKey === 'added_at') {
         valA = a.added_at || '';
         valB = b.added_at || '';
-        return valB.localeCompare(valA); // Default: newest first
+        return valB.localeCompare(valA);
       } else if (this._sortKey === 'rating') {
         valA = userRating(a);
         valB = userRating(b);
@@ -1200,19 +1176,15 @@ class BookcasePanel extends HTMLElement {
         return valA - valB;
       }
     });
-
     this.querySelector('#stats').innerText = `${books.length} knih`;
     this.content.innerHTML = '';
-    
     books.forEach(book => {
       const userStatus = (book.statuses_by && book.statuses_by[userName]) || book.status || 'to_read';
       const card = document.createElement('div');
       card.className = 'book-card';
       card.onclick = () => { this._manualMode = false; this.openDetail(book); };
-      
       const statusColors = { 'to_read': '#2196f3', 'reading': '#4caf50', 'read': '#9c27b0', 'wishlist': '#ff9800' };
       const statusLabels = { 'to_read': 'MÁME', 'reading': 'ČTU', 'read': 'PŘEČTENO', 'wishlist': 'CHCI' };
-      
       card.innerHTML = `
         <div class="cover-wrapper">
           <img src="/bookcase_static/covers/${book.id}.jpg?v=${book.cover_url ? book.cover_url.length : 0}" onerror="this.src='${book.cover_url || ''}'; this.onerror=function(){this.style.display='none'; this.nextElementSibling.style.display='flex';};">
