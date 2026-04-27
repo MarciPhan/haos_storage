@@ -438,14 +438,24 @@ async def fetch_databazeknih_cz(session, query: str) -> dict | None:
         title_match = re.search(r'<h1[^>]* itemprop="name">([^<]+)</h1>', text)
         if not title_match: title_match = re.search(r'<h1[^>]*>([^<]+)</h1>', text)
         
-        author_match = re.search(r'<a[^>]+ itemprop="author">([^<]+)</a>', text)
-        desc_match = re.search(r'<p id="short_desc"[^>]*>(.*?)</p>', text, re.DOTALL)
-        img_match = re.search(r'<img[^>]+class="kniha_img"[^>]+src="([^"]+)"', text)
+        author_match = re.search(r'itemprop="author"[^>]*>([^<]+)</a>', text)
+        if not author_match: author_match = re.search(r'/autori/[^"\']+["\'][^>]*>([^<]+)</a>', text)
         
-        pages = re.search(r'Po\u010det stran:.*?(\d+)', text)
-        year = re.search(r'Rok vyd\u00e1n\u00ed:.*?(\d{4})', text)
-        publisher = re.search(r'Nakladatelstv\u00ed:.*?<a[^>]+>([^<]+)</a>', text)
-        isbn_match = re.search(r'ISBN:.*?([0-9- ]{10,20})', text)
+        desc_match = re.search(r'id="short_desc"[^>]*>(.*?)</p>', text, re.DOTALL)
+        img_match = re.search(r'class="kniha_img"[^>]+src="([^"]+)"', text)
+        
+        pages = re.search(r'Po\u010det stran[:\s]+(\d+)', text)
+        year = re.search(r'Rok vyd\u00e1n\u00ed[:\s]+(\d{4})', text)
+        if not year: 
+            year_match = re.search(r'(\d{4}),\s*<a[^>]+>', text)
+            if year_match: year = year_match
+            
+        publisher = re.search(r'Nakladatelstv\u00ed[:\s]+<a[^>]+>([^<]+)</a>', text)
+        if not publisher:
+            pub_match = re.search(r'\d{4},\s*<a[^>]+>([^<]+)</a>', text)
+            if pub_match: publisher = pub_match
+            
+        isbn_match = re.search(r'ISBN[:\s]+([0-9- ]{10,20})', text)
 
         return {
             "title": title_match.group(1).strip() if title_match else None,
@@ -562,7 +572,6 @@ async def fetch_martinus_cz(session, isbn: str, query: str = "") -> dict | None:
             "cover_url": img.group(1) if img else None,
             "pages": int(pages.group(1)) if pages else None,
             "publish_date": year.group(0) if year else None,
-            "isbn": re.sub(r'[- ]', '', isbn_match.group(1)) if isbn_match else None,
             "url": url
         }
     except: return None
