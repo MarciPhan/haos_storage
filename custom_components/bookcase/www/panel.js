@@ -462,7 +462,10 @@ class BookcasePanel extends HTMLElement {
       <div class="container">
         <div class="header">
           <h1>Moje Knihovna</h1>
-          <div id="stats" style="font-size: 0.9rem; opacity: 0.6;"></div>
+          <div style="display:flex; align-items:center; gap:15px;">
+            <a href="/bookcase_static/export.csv" target="_blank" class="action-btn" style="background:#4caf50; text-decoration:none; height:36px; padding:0 15px; font-size:0.8rem;">📥 Export CSV</a>
+            <div id="stats" style="font-size: 0.9rem; opacity: 0.6;"></div>
+          </div>
         </div>
         
         <div class="toolbar">
@@ -886,8 +889,6 @@ class BookcasePanel extends HTMLElement {
           <span style="font-size: 48px; margin-bottom: 10px;">📖</span>
           ${book.title || 'Nová kniha'}
         </div>
-        <button id="upload-cover-btn" class="action-btn" style="margin-top:15px; width:100%; background:var(--secondary-text-color); font-size:0.8rem;">📷 Nahrát vlastní fotku</button>
-        <input type="file" id="cover-upload-input" style="display:none;" accept="image/*">
       </div>
       <div class="modal-right">
         <div class="section-title">📚 Základní informace</div>
@@ -948,7 +949,11 @@ class BookcasePanel extends HTMLElement {
         <div class="form-row cols-2">
           <div class="form-group">
             <label>URL obálky</label>
-            <input type="text" id="edit-cover-url" class="text-input" value="${book.cover_url || ''}" placeholder="https://...">
+            <div style="display:flex; gap:8px;">
+              <input type="text" id="edit-cover-url" class="text-input" value="${book.cover_url || ''}" placeholder="https://..." style="flex:1;">
+              <button id="upload-cover-btn" class="action-btn" style="padding:0 12px; height:42px; background:var(--secondary-text-color);" title="Nahrát vlastní fotku">📷</button>
+            </div>
+            <input type="file" id="cover-upload-input" style="display:none;" accept="image/*">
           </div>
           <div class="form-group">
             <label>Odkaz na knihu</label>
