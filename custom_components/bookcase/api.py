@@ -20,6 +20,18 @@ _LANG_MAP = {
     "und": "", "mul": "Vícejazyčné",
 }
 
+# Priorita zdrojů pro metadata (titul, autoři atd.)
+_SOURCE_PRIORITY = {
+    "Databáze knih": 150,
+    "Didasko.cz": 140,
+    "Martinus": 130,
+    "Google Books": 120,
+    "NKP": 110,
+    "Knihovny.cz": 100,
+    "Open Library": 80,
+    "ObalkyKnih": 50,
+}
+
 
 def _normalize_language(lang_code: str | None) -> str:
     """Convert ISO 639 language code to Czech name."""
@@ -81,6 +93,7 @@ async def _safe_fetch(name: str, fn, session, *args) -> dict | None:
         result = await asyncio.wait_for(fn(session, *args), timeout=_SOURCE_TIMEOUT)
         if result and (result.get("title") or result.get("cover_url")):
             _LOGGER.debug("Bookcase: %s returned data for %s", name, query)
+            result["_source"] = name
             return result
         return None
     except asyncio.TimeoutError:
@@ -109,29 +122,52 @@ def _merge_results(isbn: str, results: list[dict]) -> dict:
     }
 
     for res in results:
+        source = res.get("_source", "unknown")
+        priority = _SOURCE_PRIORITY.get(source, 10)
+
         # ISBN – pokud jsme hledali podle názvu nebo máme kratší verzi, preferujeme delší nalezené ISBN
         res_isbn = res.get("isbn")
         if res_isbn and (not merged["isbn"] or not any(c.isdigit() for c in merged["isbn"]) or len(res_isbn) > len(merged["isbn"])):
             merged["isbn"] = res_isbn
 
-        # Titul – preferujeme delší (pravděpodobně kompletní)
+        # Titul – preferujeme vyšší prioritu zdroje, při stejné prioritě delší text
         res_title = res.get("title")
-        if res_title and (not merged["title"] or len(res_title) > len(merged["title"])):
-            merged["title"] = res_title
+        if res_title:
+            current_source = merged.get("_title_source")
+            current_priority = _SOURCE_PRIORITY.get(current_source, 0) if current_source else 0
+            
+            if priority > current_priority:
+                merged["title"] = res_title
+                merged["_title_source"] = source
+            elif priority == current_priority:
+                if not merged["title"] or len(res_title) > len(merged["title"]):
+                    merged["title"] = res_title
+                    merged["_title_source"] = source
 
-        # Podnázev – první nalezený
-        if not merged["subtitle"] and res.get("subtitle"):
-            merged["subtitle"] = res["subtitle"]
+        # Podnázev – první nalezený (nebo z prioritního zdroje)
+        res_subtitle = res.get("subtitle")
+        if res_subtitle and (not merged["subtitle"] or priority > _SOURCE_PRIORITY.get(merged.get("_subtitle_source"), 0)):
+            merged["subtitle"] = res_subtitle
+            merged["_subtitle_source"] = source
 
         # Popis – preferujeme delší
         res_desc = res.get("description", "")
         if res_desc and (not merged["description"] or len(res_desc) > len(merged["description"] or "")):
             merged["description"] = res_desc
 
-        # Autoři – deduplikujeme
-        for author in res.get("authors", []):
-            if author and author not in merged["authors"]:
-                merged["authors"].append(author)
+        # Autoři – upřednostníme autory z nejlepšího zdroje, ale u ostatních jen doplňujeme pokud chybí
+        res_authors = res.get("authors", [])
+        if res_authors:
+            current_authors_source = merged.get("_authors_source")
+            current_authors_priority = _SOURCE_PRIORITY.get(current_authors_source, 0) if current_authors_source else 0
+            
+            if priority > current_authors_priority:
+                merged["authors"] = res_authors
+                merged["_authors_source"] = source
+            else:
+                for author in res_authors:
+                    if author and author not in merged["authors"]:
+                        merged["authors"].append(author)
 
         # Nakladatelé – deduplikujeme
         for pub in res.get("publishers", []):
@@ -241,22 +277,21 @@ async def fetch_obalkyknih_cz(session, isbn: str) -> dict | None:
             return None
         text = await resp.text()
         
-        # Extrahuje link na velkou obálku
-        match = re.search(r'<link\s+rel=["\']previewimage["\']\s+href=["\']([^"\']+)["\']', text, re.IGNORECASE)
-        if match:
-            cover_url = match.group(1)
-            if cover_url.startswith("//"):
-                cover_url = "https:" + cover_url
-            elif cover_url.startswith("/"):
-                cover_url = "https://www.obalkyknih.cz" + cover_url
-            
-            # Pokud našel obálku, vrátíme alespoň cover a title
-            # Můžeme přidat i prázdný zbytek
-            return {
-                "cover_url": cover_url,
-                "title": "Nalezeno v ObálkyKnih" # Tím zabráníme aby funkce vrátila None sice bez validního textu, ale _safe_fetch to zahodí bez titlu
-            }
-        return None
+    # Extrahuje link na velkou obálku
+    match = re.search(r'<link\s+rel=["\']previewimage["\']\s+href=["\']([^"\']+)["\']', text, re.IGNORECASE)
+    if match:
+        cover_url = match.group(1)
+        if cover_url.startswith("//"):
+            cover_url = "https:" + cover_url
+        elif cover_url.startswith("/"):
+            cover_url = "https://www.obalkyknih.cz" + cover_url
+        
+        # Pokud našel obálku, vrátíme alespoň cover a title
+        return {
+            "cover_url": cover_url,
+            "title": "Nalezeno v ObálkyKnih" 
+        }
+    return None
 
 
 async def fetch_open_library(session, isbn: str) -> dict | None:
@@ -300,7 +335,14 @@ async def fetch_knihovny_cz(session, isbn: str, original_query: str = "") -> dic
         if resp.status == 200:
             data = await resp.json()
             if data.get("resultCount", 0) > 0:
-                return await _parse_knihovny_record(session, data["records"][0])
+                # Pokusíme se najít nejlepší záznam (např. ten s obálkou)
+                records = data["records"]
+                best_record = records[0]
+                for r in records[:3]:
+                    if r.get("cover") and not best_record.get("cover"):
+                        best_record = r
+                        break
+                return await _parse_knihovny_record(session, best_record)
 
     # 2. Fallback: Citované AllFields vyhledávání pro staré publikace (např. "23-058-65")
     if original_query and original_query != isbn:
@@ -310,7 +352,14 @@ async def fetch_knihovny_cz(session, isbn: str, original_query: str = "") -> dic
             if resp.status == 200:
                 data = await resp.json()
                 if data.get("resultCount", 0) > 0:
-                    return await _parse_knihovny_record(session, data["records"][0])
+                    # Pokusíme se najít nejlepší záznam i zde
+                    records = data["records"]
+                    best_record = records[0]
+                    for r in records[:3]:
+                        if r.get("cover") and not best_record.get("cover"):
+                            best_record = r
+                            break
+                    return await _parse_knihovny_record(session, best_record)
     return None
 
 
@@ -363,7 +412,6 @@ async def _parse_knihovny_record(session, r: dict) -> dict:
 
 async def fetch_nkp_cz(session, query: str) -> dict | None:
     """Národní knihovna ČR – Aleph X-Server."""
-    # Pro jistotu zkusíme citované vyhledávání pro ne-ISBN kódy
     req = f'"{query}"' if "-" in query else query
     url = f"https://aleph.nkp.cz/X?op=find&code=WRD&request={req}"
     try:
@@ -380,7 +428,6 @@ async def fetch_nkp_cz(session, query: str) -> dict | None:
             if resp.status != 200: return None
             marc = await resp.text()
             
-        # Velmi hrubý MARC parser přes regexy
         def get_field(tag, sub=""):
             m = re.search(f'<varfield id="{tag}"[^>]*>(.*?)</varfield>', marc, re.DOTALL)
             if not m: return ""
@@ -413,10 +460,9 @@ async def fetch_databazeknih_cz(session, query: str) -> dict | None:
         url = query
     else:
         import urllib.parse
-        # Databáze knih preferuje '+' místo '%20' a vyžaduje User-Agent
         encoded_query = urllib.parse.quote(query).replace("%20", "+")
         url = f"https://www.databazeknih.cz/search?q={encoded_query}"
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"}
+    headers = {"User-Agent": "Mozilla/5.0"}
     
     try:
         async with session.get(url, timeout=_SOURCE_TIMEOUT, headers=headers, allow_redirects=True) as resp:
@@ -425,7 +471,6 @@ async def fetch_databazeknih_cz(session, query: str) -> dict | None:
             final_url = str(resp.url)
             
         if "/knihy/" not in final_url and "/prehled-knihy/" not in final_url:
-            # Jsme na výsledcích hledání – zkusíme vzít první odkaz
             match = re.search(r'href=["\'](?:https://www.databazeknih.cz)?/((?:prehled-knihy|knihy)/[^"\']+)["\']', text)
             if not match: return None
             url = "https://www.databazeknih.cz/" + match.group(1)
@@ -437,24 +482,12 @@ async def fetch_databazeknih_cz(session, query: str) -> dict | None:
 
         title_match = re.search(r'<h1[^>]* itemprop="name">([^<]+)</h1>', text)
         if not title_match: title_match = re.search(r'<h1[^>]*>([^<]+)</h1>', text)
-        
         author_match = re.search(r'itemprop="author"[^>]*>([^<]+)</a>', text)
-        if not author_match: author_match = re.search(r'/autori/[^"\']+["\'][^>]*>([^<]+)</a>', text)
-        
         desc_match = re.search(r'id="short_desc"[^>]*>(.*?)</p>', text, re.DOTALL)
         img_match = re.search(r'class="kniha_img"[^>]+src="([^"]+)"', text)
-        
         pages = re.search(r'Po\u010det stran[:\s]+(\d+)', text)
         year = re.search(r'Rok vyd\u00e1n\u00ed[:\s]+(\d{4})', text)
-        if not year: 
-            year_match = re.search(r'(\d{4}),\s*<a[^>]+>', text)
-            if year_match: year = year_match
-            
         publisher = re.search(r'Nakladatelstv\u00ed[:\s]+<a[^>]+>([^<]+)</a>', text)
-        if not publisher:
-            pub_match = re.search(r'\d{4},\s*<a[^>]+>([^<]+)</a>', text)
-            if pub_match: publisher = pub_match
-            
         isbn_match = re.search(r'ISBN[:\s]+([0-9- ]{10,20})', text)
 
         return {
@@ -471,74 +504,6 @@ async def fetch_databazeknih_cz(session, query: str) -> dict | None:
     except: return None
 
 
-async def fetch_reknihy_cz(session, query: str) -> dict | None:
-    """Reknihy.cz – populární český bazar knih."""
-    import urllib.parse
-    encoded_query = urllib.parse.quote(query)
-    url = f"https://www.reknihy.cz/vyhledavani?q={encoded_query}"
-    headers = {"User-Agent": "Mozilla/5.0"}
-    
-    try:
-        async with session.get(url, timeout=_SOURCE_TIMEOUT, headers=headers) as resp:
-            if resp.status != 200: return None
-            text = await resp.text()
-            
-        match = re.search(r'href=["\'](/kniha/[^"\']+)["\']', text)
-        if not match: return None
-        
-        url = "https://www.reknihy.cz" + match.group(1)
-        async with session.get(url, timeout=_SOURCE_TIMEOUT, headers=headers) as resp:
-            if resp.status != 200: return None
-            text = await resp.text()
-            
-        title = re.search(r'<h1[^>]*>([^<]+)</h1>', text)
-        author = re.search(r'Autor:.*?<a[^>]*>([^<]+)</a>', text, re.DOTALL)
-        img = re.search(r'<img[^>]+class="product-image"[^>]+src="([^"]+)"', text)
-        desc = re.search(r'class="product-description">([^<]+)</div>', text)
-        
-        return {
-            "title": title.group(1).strip() if title else None,
-            "authors": [author.group(1).strip()] if author else [],
-            "description": desc.group(1).strip() if desc else None,
-            "cover_url": img.group(1) if img else None,
-            "url": url
-        }
-    except: return None
-
-
-async def fetch_trhknih_cz(session, query: str) -> dict | None:
-    """TrhKnih.cz – největší český knižní antikvariát."""
-    import urllib.parse
-    encoded_query = urllib.parse.quote(query)
-    url = f"https://www.trhknih.cz/vyhledavat?q={encoded_query}"
-    headers = {"User-Agent": "Mozilla/5.0"}
-    
-    try:
-        async with session.get(url, timeout=_SOURCE_TIMEOUT, headers=headers) as resp:
-            if resp.status != 200: return None
-            text = await resp.text()
-            
-        match = re.search(r'href=["\'](/kniha/[^"\']+)["\']', text)
-        if not match: return None
-        
-        url = "https://www.trhknih.cz" + match.group(1)
-        async with session.get(url, timeout=_SOURCE_TIMEOUT, headers=headers) as resp:
-            if resp.status != 200: return None
-            text = await resp.text()
-            
-        title = re.search(r'<h1[^>]*>([^<]+)</h1>', text)
-        author = re.search(r'Autor:.*?<a[^>]*>([^<]+)</a>', text, re.DOTALL)
-        img = re.search(r'<img[^>]+class="book-cover"[^>]+src="([^"]+)"', text)
-        
-        return {
-            "title": title.group(1).strip() if title else None,
-            "authors": [author.group(1).strip()] if author else [],
-            "cover_url": "https://www.trhknih.cz" + img.group(1) if img else None,
-            "url": url
-        }
-    except: return None
-
-
 async def fetch_martinus_cz(session, isbn: str, query: str = "") -> dict | None:
     """Martinus.cz – velký český e-shop."""
     q = isbn if len(isbn) >= 10 else query
@@ -550,7 +515,6 @@ async def fetch_martinus_cz(session, isbn: str, query: str = "") -> dict | None:
             final_url = str(resp.url)
             
         if "/produkty/" not in final_url:
-            # Zkusíme najít první produkt v seznamu
             match = re.search(r'href=["\'](/produkty/[^"\']+)["\']', text)
             if not match: return None
             url = "https://www.martinus.cz" + match.group(1)
@@ -579,51 +543,73 @@ async def fetch_martinus_cz(session, isbn: str, query: str = "") -> dict | None:
 
 async def fetch_didasko_cz(session, isbn: str) -> dict | None:
     """Scrapuje obchod Didasko.cz pro jejich specifické knihy."""
-    url = f"https://didasko.cz/?s={isbn}&post_type=product"
-    async with session.get(url, timeout=_SOURCE_TIMEOUT) as resp:
-        if resp.status != 200: return None
-        text = await resp.text()
-        
-    links = set(re.findall(r'href="(https://didasko.cz/obchod/[^/"]+/)"', text))
-    links = [l for l in links if "feed" not in l and "page" not in l][:5]
+    # Zkusíme hledání s čistým ISBN i s různými formáty pomlček
+    queries = [isbn]
+    if len(isbn) == 13:
+        # Formát 978-80-XXXXX-X-X (častý u Didaska)
+        queries.append(f"{isbn[:3]}-{isbn[3:5]}-{isbn[5:10]}-{isbn[10:12]}-{isbn[12:]}")
+        # Formát 978-80-XXXX-XX-X
+        queries.append(f"{isbn[:3]}-{isbn[3:5]}-{isbn[5:9]}-{isbn[9:12]}-{isbn[12:]}")
+        # Jen část ISBN (posledních 5-6 číslic)
+        queries.append(isbn[-6:])
     
-    for link in links:
-        async with session.get(link, timeout=_SOURCE_TIMEOUT) as resp:
-            if resp.status == 200:
-                ptext = await resp.text()
+    for q in queries:
+        url = f"https://didasko.cz/?s={q}&post_type=product"
+        try:
+            async with session.get(url, timeout=_SOURCE_TIMEOUT) as resp:
+                if resp.status != 200: continue
+                text = await resp.text()
                 
-                # Zkontrolovat, zda ISBN sedí
-                isbn_match = re.search(r'<li class="isbn[^>]+>.*?<span class="attribute-value">([^<]+)</span>', ptext, re.IGNORECASE | re.DOTALL)
-                if not isbn_match: continue
-                found_isbn = re.sub(r'[- ]', '', isbn_match.group(1))
-                if found_isbn != isbn: continue
-                
-                # Máme produkt
-                title_match = re.search(r'<h1 class="product_title entry-title">([^<]+)</h1>', ptext)
-                title = title_match.group(1).replace("&#8211;", "-").strip() if title_match else None
-                
-                img_match = re.search(r'<img[^>]+src="([^"]+)"[^>]*class="[^"]*wp-post-image', ptext)
-                cover_url = img_match.group(1) if img_match else None
-                
-                author_match = re.search(r'<li class="autor[^>]+>.*?<span class="attribute-value">([^<]+)</span>', ptext, re.IGNORECASE | re.DOTALL)
-                author = author_match.group(1).strip() if author_match else None
-                
-                pages_match = re.search(r'<li class="pocet-stran[^>]+>.*?<span class="attribute-value">([^<]+)</span>', ptext, re.IGNORECASE | re.DOTALL)
-                pages = int(pages_match.group(1)) if pages_match else None
-                
-                year_match = re.search(r'<li class="rok-vydani[^>]+>.*?<span class="attribute-value">([^<]+)</span>', ptext, re.IGNORECASE | re.DOTALL)
-                year = year_match.group(1).strip() if year_match else None
-                
-                pub_match = re.search(r'<li class="vydavatel[^>]+>.*?<span class="attribute-value">([^<]+)</span>', ptext, re.IGNORECASE | re.DOTALL)
-                publisher = pub_match.group(1).strip() if pub_match else None
-                
-                return {
-                    "title": title,
-                    "authors": [author] if author else [],
-                    "cover_url": cover_url,
-                    "pages": pages,
-                    "publish_date": year,
-                    "publishers": [publisher] if publisher else [],
-                    "url": link
-                }
+            final_url = str(resp.url)
+            if "/obchod/" in final_url and final_url.strip("/").split("/")[-1] != "obchod":
+                links = [final_url]
+            else:
+                links = set(re.findall(r'href="(https://didasko.cz/obchod/[^/"]+/)"', text))
+                links = [l for l in links if all(x not in l for x in ["feed", "page", "kosik", "muj-ucet"])]
+            
+            for link in links:
+                async with session.get(link, timeout=_SOURCE_TIMEOUT) as resp:
+                    if resp.status == 200:
+                        ptext = await resp.text()
+                        
+                        # Zkontrolovat, zda ISBN sedí
+                        isbn_match = re.search(r'<li class="isbn[^>]+>.*?<span class="attribute-value">([^<]+)</span>', ptext, re.IGNORECASE | re.DOTALL)
+                        if not isbn_match:
+                            if isbn not in re.sub(r'[- ]', '', ptext): continue
+                        else:
+                            found_isbn = re.sub(r'[- ]', '', isbn_match.group(1))
+                            if found_isbn != isbn: continue
+                        
+                        title_match = re.search(r'<h1 class="product_title entry-title">([^<]+)</h1>', ptext)
+                        if not title_match:
+                            title_match = re.search(r'<meta property="og:title" content="([^"]+)"', ptext)
+                        
+                        title = title_match.group(1).replace("&#8211;", "-").replace(" - Didasko", "").strip() if title_match else None
+                        img_match = re.search(r'<img[^>]+src="([^"]+)"[^>]*class="[^"]*wp-post-image', ptext)
+                        if not img_match:
+                            img_match = re.search(r'<meta property="og:image" content="([^"]+)"', ptext)
+                        cover_url = img_match.group(1) if img_match else None
+                        
+                        author_match = re.search(r'<li class="autor[^>]+>.*?<span class="attribute-value">([^<]+)</span>', ptext, re.IGNORECASE | re.DOTALL)
+                        author = author_match.group(1).strip() if author_match else None
+                        
+                        pages_match = re.search(r'<li class="pocet-stran[^>]+>.*?<span class="attribute-value">([^<]+)</span>', ptext, re.IGNORECASE | re.DOTALL)
+                        pages = int(pages_match.group(1)) if pages_match else None
+                        
+                        year_match = re.search(r'<li class="rok-vydani[^>]+>.*?<span class="attribute-value">([^<]+)</span>', ptext, re.IGNORECASE | re.DOTALL)
+                        year = year_match.group(1).strip() if year_match else None
+                        
+                        pub_match = re.search(r'<li class="vydavatel[^>]+>.*?<span class="attribute-value">([^<]+)</span>', ptext, re.IGNORECASE | re.DOTALL)
+                        publisher = pub_match.group(1).strip() if pub_match else None
+                        
+                        return {
+                            "title": title,
+                            "authors": [author] if author else [],
+                            "cover_url": cover_url,
+                            "pages": pages,
+                            "publish_date": year,
+                            "publishers": [publisher] if publisher else [],
+                            "url": link
+                        }
+        except: continue
     return None
