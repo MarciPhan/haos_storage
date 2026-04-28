@@ -126,8 +126,14 @@ class BookcasePanel extends HTMLElement {
         .toolbar {
           display: flex;
           flex-direction: column;
-          gap: 20px;
+          gap: 16px;
           margin-bottom: 40px;
+          position: sticky;
+          top: 0;
+          z-index: 100;
+          background: var(--primary-background-color);
+          padding: 16px 0;
+          box-shadow: 0 10px 20px -10px rgba(0,0,0,0.1);
         }
 
         .filter-bar {
@@ -287,6 +293,14 @@ class BookcasePanel extends HTMLElement {
           font-size: 0.95rem;
           line-height: 1.3;
           color: var(--primary-text-color);
+          word-break: break-word;
+        }
+        .book-isbn {
+          font-size: 0.7rem;
+          opacity: 0.6;
+          margin-top: 2px;
+          word-break: break-all;
+          overflow-wrap: anywhere;
         }
         .status-badge {
           position: absolute;
@@ -503,6 +517,29 @@ class BookcasePanel extends HTMLElement {
           .book-title { font-size: 0.85rem; margin-top: 8px; }
           .search-add-row { gap: 12px; }
           .add-box, .search-box { width: 100%; min-width: 0; }
+          .add-box { 
+            flex-wrap: wrap; 
+            background: transparent; 
+            border: none; 
+            padding: 0; 
+            gap: 8px;
+          }
+          .add-box input {
+            background: var(--card-background-color);
+            border: 1px solid var(--divider-color);
+            border-radius: 12px;
+            flex: 1;
+            min-width: 150px;
+            height: 48px;
+          }
+          .add-box .action-btn, .add-box .scan-btn {
+            flex-grow: 1;
+            height: 48px;
+          }
+          .toolbar {
+            padding: 10px 0;
+            margin-bottom: 20px;
+          }
           
           .modal { padding: 0; }
           .modal-content { 
@@ -1019,8 +1056,8 @@ class BookcasePanel extends HTMLElement {
             <input type="text" id="edit-genre" class="text-input" value="${genres}" placeholder="Fantasy, Sci-fi...">
           </div>
           <div class="form-group">
-            <label>ISBN</label>
-            <input type="text" id="edit-isbn" class="text-input" value="${book.isbn || ''}" disabled>
+            <label>ISBN / Identifikátor</label>
+            <div class="text-input" style="background: var(--secondary-background-color); min-height: 42px; opacity: 0.8; word-break: break-all;">${book.isbn || '-'}</div>
           </div>
         </div>
 
@@ -1314,7 +1351,7 @@ class BookcasePanel extends HTMLElement {
           ${book.lent_to ? `<div class="lent-badge">📦 ${book.lent_to}${book.lent_until ? ' · do ' + book.lent_until : ''}</div>` : ''}
         </div>
         <div class="book-title">${this._formatTitle(book)}</div>
-        <div class="book-isbn" style="font-size:0.7rem; opacity:0.6; margin-top:2px;">${book.isbn || ''}</div>
+        <div class="book-isbn">${book.isbn || ''}</div>
         <div style="font-size:0.75rem; color:var(--secondary-text-color); margin-top:4px; display:flex; justify-content:space-between;">
           <span class="book-author">${(book.authors && book.authors[0]) ? book.authors[0] : ''}</span>
           ${(book.ratings_by && book.ratings_by[userName]) ? `<span style="color:#ffca28;">${'★'.repeat(book.ratings_by[userName])}</span>` : ''}
