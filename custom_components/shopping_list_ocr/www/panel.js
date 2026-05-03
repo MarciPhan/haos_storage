@@ -5,8 +5,8 @@ const CATS=["","Ovoce a zelenina","Mléčné výrobky","Maso a ryby","Pečivo","
 const LOCS=["","Lednice","Mrazák","Spíž","Skříňka","Koupelna"];
 
 class ShoppingListPanel extends LitElement{
-static get properties(){return{hass:{type:Object},data:{type:Object},tab:{type:String},scan:{type:Boolean},search:{type:String},filterCat:{type:String},filterLoc:{type:String},editing:{type:String},toast:{type:String},uploadState:{type:String},uploadPreview:{type:String},uploadProgress:{type:Number}};}
-constructor(){super();this.data={inventory:{},pending_receipts:{},recipes:{},consumption_log:[]};this.tab="dashboard";this.scan=false;this.search="";this.filterCat="";this.filterLoc="";this.editing="";this.toast="";this._sc=null;this.uploadState="";this.uploadPreview="";this.uploadProgress=0;}
+static get properties(){return{hass:{type:Object},data:{type:Object},tab:{type:String},scan:{type:Boolean},search:{type:String},filterCat:{type:String},filterLoc:{type:String},editing:{type:String},toast:{type:String},uploadState:{type:String},uploadPreview:{type:String},uploadProgress:{type:Number},recipePortions:{type:Object}};}
+constructor(){super();this.data={inventory:{},pending_receipts:{},recipes:{},consumption_log:[]};this.tab="dashboard";this.scan=false;this.search="";this.filterCat="";this.filterLoc="";this.editing="";this.toast="";this._sc=null;this.uploadState="";this.uploadPreview="";this.uploadProgress=0;this.recipePortions={};}
 connectedCallback(){super.connectedCallback();this._fetch();this.hass?.connection?.subscribeEvents(()=>this._fetch(),"shopping_list_ocr_updated");}
 async _fetch(){if(!this.hass)return;try{const r=await this.hass.fetchWithAuth("/api/shopping_list/data");if(r.ok)this.data=await r.json();}catch(e){}}
 _t(m){this.toast=m;setTimeout(()=>{this.toast=""},3500);}
@@ -208,18 +208,47 @@ ${r.items.map(i=>html`<div class="ri"><span>${i.name}</span><span style="font-we
 </div></div>`)}</div>`}
 </section>`;}
 
-_rcp(){const rr=Object.values(this.data.recipes||{});
+_scaleIng(text, p, base){
+if(p===base)return text;
+const r=p/base;
+const m=text.match(/^([\d.,]+(?:-[\d.,]+)?|[\d]+\/[\d]+)\s*(.*)/);
+if(!m)return text;
+let numStr=m[1].replace(',', '.');
+let val=0;
+if(numStr.includes('-')){const pts=numStr.split('-');val=(parseFloat(pts[0])+parseFloat(pts[1]))/2;}
+else if(numStr.includes('/')){const pts=numStr.split('/');val=parseFloat(pts[0])/parseFloat(pts[1]);}
+else{val=parseFloat(numStr);}
+if(isNaN(val))return text;
+let res=val*r;
+let resStr=res%1===0?res.toString():res.toFixed(1).replace('.0','').replace('.',',');
+return resStr+' '+m[2];
+}
+
+_rcp(){const rr=Object.entries(this.data.recipes||{});
 return html`<section>
 <div class="tbar">
 <input id="rurl" type="text" placeholder="URL receptu…" @keyup=${e=>{if(e.key==='Enter')this._addRcp();}}>
 <button class="btn bp" @click=${this._addRcp}><ha-icon icon="mdi:plus"></ha-icon> Přidat</button>
 </div>
-${rr.length===0?html`<div class="empty"><p><strong>Žádné recepty</strong></p></div>`:html`<div class="gr">${rr.map(r=>html`
+${rr.length===0?html`<div class="empty"><p><strong>Žádné recepty</strong></p></div>`:html`<div class="gr">${rr.map(([id,r])=>{
+const base=4;const p=this.recipePortions[id]||base;
+const ings=(r.ingredients||[]).map(i=>this._scaleIng(i, p, base));
+return html`
 <div class="c">${r.image_url?html`<img class="ci" src="${r.image_url}" loading="lazy" onerror="this.style.display='none'">`:''}
-<div class="cb"><h3 class="ct">${r.title}</h3><div class="cm">${r.ingredients?.length||0} ingrediencí</div>
-<a href="${r.pdf_url}" target="_blank" class="btn bo bw" style="text-decoration:none;margin-top:auto">PDF</a>
-<button class="btn bp bw" @click=${()=>{(r.ingredients||[]).forEach(i=>this.hass.callService("shopping_list","add_item",{name:i}));this._t("Přidáno do nákupu");}}>Do nákupu</button>
-</div></div>`)}</div>`}
+<div class="cb"><h3 class="ct">${r.title}</h3>
+<div style="display:flex;align-items:center;gap:10px;margin:8px 0;background:rgba(255,255,255,0.05);padding:6px;border-radius:8px;width:fit-content">
+<button class="qb" style="padding:2px 8px;flex:none;font-size:1.2rem" @click=${()=>{this.recipePortions={...this.recipePortions,[id]:Math.max(1, p-1)};}}>−</button>
+<span style="font-weight:600;font-size:0.9rem">${p} porcí</span>
+<button class="qb" style="padding:2px 8px;flex:none;font-size:1.2rem" @click=${()=>{this.recipePortions={...this.recipePortions,[id]:p+1};}}>+</button>
+</div>
+<div class="cm" style="max-height:120px;overflow-y:auto;padding-right:4px;margin-bottom:8px">
+${ings.map(i=>html`<div style="margin-bottom:4px">• ${i}</div>`)}
+</div>
+<div style="display:flex;gap:6px;margin-top:auto">
+<a href="${r.pdf_url}" target="_blank" class="btn bo" style="text-decoration:none;flex:1">PDF</a>
+<button class="btn bp" style="flex:2" @click=${()=>{ings.forEach(i=>this.hass.callService("shopping_list","add_item",{name:i}));this._t("Přidáno do nákupu");}}>Do nákupu</button>
+</div>
+</div></div>`})}</div>`}
 </section>`;}
 
 // --- Actions ---
