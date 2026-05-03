@@ -380,6 +380,7 @@ async def async_setup_entry(hass: HomeAssistant, entry):
 
         def _gen_pdf():
             from fpdf import FPDF
+            import unicodedata
             pdf = FPDF()
             pdf.add_page()
 
@@ -388,34 +389,40 @@ async def async_setup_entry(hass: HomeAssistant, entry):
                 pdf.add_font("DejaVu", "", font_path)
                 font_name = "DejaVu"
             else:
-                _LOGGER.warning("No Unicode font available; Czech characters may break")
+                _LOGGER.warning("No Unicode font available; stripping accents to prevent crash")
                 font_name = "Helvetica"
+
+            def sanitize(text):
+                if font_name == "DejaVu":
+                    return text
+                # Normalize and remove accents/unsupported chars for Helvetica
+                return "".join(c for c in unicodedata.normalize("NFD", text) if unicodedata.category(c) != "Mn").encode("ascii", "ignore").decode("ascii")
 
             # Title
             pdf.set_font(font_name, size=18)
-            pdf.cell(190, 12, txt=recipe_data["title"], ln=True, align="C")
+            pdf.cell(190, 12, txt=sanitize(recipe_data["title"]), ln=True, align="C")
             pdf.ln(8)
 
             # Source
             if recipe_data.get("url"):
                 pdf.set_font(font_name, size=9)
-                pdf.cell(190, 6, txt=f"Zdroj: {recipe_data['url']}", ln=True, align="C")
+                pdf.cell(190, 6, txt=sanitize(f"Zdroj: {recipe_data['url']}"), ln=True, align="C")
                 pdf.ln(8)
 
             # Ingredients
             pdf.set_font(font_name, size=14)
-            pdf.cell(190, 10, txt="Ingredience:", ln=True)
+            pdf.cell(190, 10, txt=sanitize("Ingredience:"), ln=True)
             pdf.set_font(font_name, size=11)
             bullet = "\u2022" if font_name == "DejaVu" else "-"
             for ing in recipe_data.get("ingredients", []):
-                pdf.multi_cell(180, 7, txt=f"  {bullet} {ing}")
+                pdf.multi_cell(180, 7, txt=sanitize(f"  {bullet} {ing}"))
             pdf.ln(6)
 
             # Instructions
             pdf.set_font(font_name, size=14)
-            pdf.cell(190, 10, txt="Postup:", ln=True)
+            pdf.cell(190, 10, txt=sanitize("Postup:"), ln=True)
             pdf.set_font(font_name, size=11)
-            pdf.multi_cell(190, 7, txt=recipe_data.get("instructions", ""))
+            pdf.multi_cell(190, 7, txt=sanitize(recipe_data.get("instructions", "")))
 
             pdf.output(pdf_path)
 
