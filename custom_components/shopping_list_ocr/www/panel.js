@@ -63,19 +63,17 @@ class ShoppingListPanel extends LitElement {
             .tab.active { background: var(--accent-color); color: white; }
             .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 24px; }
             .card { background: var(--card-background-color, #fff); border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.1); overflow: hidden; transition: transform 0.2s; position: relative; display: flex; flex-direction: column; }
-            .card:hover { transform: translateY(-4px); }
             .card-content { padding: 16px; display: flex; flex-direction: column; flex: 1; }
             .card-img { width: 100%; height: 160px; object-fit: cover; background: var(--secondary-background-color); }
             .btn { background: var(--accent-color); color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: 500; margin-top: 12px; width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px; }
             .btn-secondary { background: var(--secondary-background-color); color: var(--primary-text-color); }
+            .btn-success { background: #4caf50; }
             .btn-outline { background: transparent; border: 1px solid var(--accent-color); color: var(--accent-color); }
-            .toolbar { background: var(--card-background-color); padding: 16px 24px; border-radius: 12px; margin-bottom: 32px; display: flex; align-items: center; gap: 16px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
+            .toolbar { background: var(--card-background-color); padding: 16px 24px; border-radius: 12px; margin-bottom: 32px; display: flex; align-items: center; gap: 16px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); flex-wrap: wrap; }
             input { flex: 1; padding: 12px; border-radius: 8px; border: 1px solid var(--divider-color); background: var(--primary-background-color); color: var(--primary-text-color); }
-            .modal { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.8); display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 9999; padding: 20px; }
+            .modal { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.85); display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 9999; padding: 20px; }
             #reader { width: 100%; max-width: 500px; background: white; border-radius: 12px; overflow: hidden; }
-            .modal-close { margin-top: 20px; padding: 10px 30px; background: white; color: black; border-radius: 30px; font-weight: bold; cursor: pointer; }
-            
-            .config-form { max-width: 500px; margin: 0 auto; background: var(--card-background-color); padding: 32px; border-radius: 16px; display: flex; flex-direction: column; gap: 16px; }
+            .modal-close { margin-top: 20px; padding: 12px 40px; background: white; color: black; border-radius: 30px; font-weight: bold; cursor: pointer; border: none; font-size: 1rem; }
         `;
     }
 
@@ -106,7 +104,7 @@ class ShoppingListPanel extends LitElement {
                 ${this.showScanner ? html`
                     <div class="modal">
                         <div id="reader"></div>
-                        <div class="modal-close" @click=${this._toggleScanner}>Zavřít skener</div>
+                        <button class="modal-close" @click=${this._toggleScanner}>Zavřít skener</button>
                     </div>
                 ` : ''}
             </div>
@@ -145,25 +143,32 @@ class ShoppingListPanel extends LitElement {
         return html`
             <section>
                 <div class="toolbar">
-                    <div style="flex: 1">Nahrajte novou účtenku:</div>
-                    <input type="file" id="file-upload" style="display: none" accept="image/*" @change=${this._handleUpload}>
-                    <button class="btn" style="width: auto; margin: 0" @click=${() => this.shadowRoot.getElementById('file-upload').click()}>
-                        <ha-icon icon="mdi:upload"></ha-icon> Nahrát účtenku
-                    </button>
+                    <div style="flex: 1; min-width: 200px;"><strong>Nahrát novou účtenku:</strong></div>
+                    <div style="display: flex; gap: 8px;">
+                        <input type="file" id="file-upload" style="display: none" accept="image/*" @change=${this._handleUpload}>
+                        <button class="btn btn-success" style="width: auto; margin: 0" @click=${() => this.shadowRoot.getElementById('file-upload').click()}>
+                            <ha-icon icon="mdi:upload"></ha-icon> Vybrat soubor / Fotit
+                        </button>
+                        <button class="btn btn-secondary" style="width: auto; margin: 0" @click=${this._scanFolder}>
+                            <ha-icon icon="mdi:refresh"></ha-icon> Skenovat složku
+                        </button>
+                    </div>
                 </div>
-                <div class="grid">
-                    ${receipts.map(receipt => html`
-                        <div class="card">
-                            <div class="card-content">
-                                <div>${new Date(receipt.date).toLocaleString()}</div>
-                                <div style="margin: 10px 0">
-                                    ${receipt.items.map(i => html`<div>${i.name} - ${i.price} Kč</div>`)}
+                ${receipts.length === 0 ? html`<div style="text-align:center; padding: 40px; color: var(--secondary-text-color)">Žádné účtenky k potvrzení.</div>` : html`
+                    <div class="grid">
+                        ${receipts.map(receipt => html`
+                            <div class="card">
+                                <div class="card-content">
+                                    <div style="font-size: 0.8rem; color: var(--secondary-text-color)">${new Date(receipt.date).toLocaleString()}</div>
+                                    <div style="margin: 12px 0">
+                                        ${receipt.items.map(i => html`<div style="display:flex; justify-content:space-between; padding:4px 0; border-bottom:1px solid var(--divider-color)"><span>${i.name}</span> <span>${i.price} Kč</span></div>`)}
+                                    </div>
+                                    <button class="btn" @click=${() => this._confirmReceipt(receipt.id)}>Potvrdit a přidat do skladu</button>
                                 </div>
-                                <button class="btn" @click=${() => this._confirmReceipt(receipt.id)}>Potvrdit</button>
                             </div>
-                        </div>
-                    `)}
-                </div>
+                        `)}
+                    </div>
+                `}
             </section>
         `;
     }
@@ -182,8 +187,10 @@ class ShoppingListPanel extends LitElement {
                             ${r.image_url ? html`<img class="card-img" src="${r.image_url}">` : ''}
                             <div class="card-content">
                                 <h3>${r.title}</h3>
-                                <a href="${r.pdf_url}" target="_blank" class="btn btn-outline">Otevřít PDF</a>
-                                <button class="btn" @click=${() => this._addIngredientsToShoppingList(r)}>Do nákupu</button>
+                                <div style="display:flex; flex-direction:column; gap:8px">
+                                    <a href="${r.pdf_url}" target="_blank" class="btn btn-outline" style="text-decoration:none">Otevřít PDF</a>
+                                    <button class="btn" @click=${() => this._addIngredientsToShoppingList(r)}>Do nákupního seznamu</button>
+                                </div>
                             </div>
                         </div>
                     `)}
@@ -195,32 +202,19 @@ class ShoppingListPanel extends LitElement {
     _renderSync() {
         const config = this.data.keep_config || {};
         return html`
-            <section>
-                <div class="config-form">
-                    <h2 style="margin: 0">Nastavení Google Keep</h2>
-                    <p style="font-size: 0.9rem; color: var(--secondary-text-color)">Použijte "Heslo aplikace" z nastavení Google účtu.</p>
-                    <input id="keep-user" type="text" placeholder="Google E-mail" .value="${config.username || ''}">
-                    <input id="keep-pass" type="password" placeholder="App Password" .value="${config.password || ''}">
-                    <input id="keep-title" type="text" placeholder="Název poznámky v Keep" .value="${config.title || 'Nákup'}">
-                    <button class="btn" @click=${this._syncToKeep}>
-                        <ha-icon icon="mdi:sync"></ha-icon> Synchronizovat nyní
-                    </button>
+            <section style="display:flex; justify-content:center; padding-top:40px">
+                <div style="width:100%; max-width:500px; background:var(--card-background-color); padding:32px; border-radius:16px; box-shadow:0 4px 20px rgba(0,0,0,0.1)">
+                    <h2 style="margin: 0 0 8px 0">Google Keep</h2>
+                    <p style="font-size: 0.9rem; color: var(--secondary-text-color); margin-bottom:24px">Zadejte Heslo aplikace pro synchronizaci.</p>
+                    <div style="display:flex; flex-direction:column; gap:16px">
+                        <input id="keep-user" type="text" placeholder="Google E-mail" .value="${config.username || ''}">
+                        <input id="keep-pass" type="password" placeholder="App Password" .value="${config.password || ''}">
+                        <input id="keep-title" type="text" placeholder="Název poznámky" .value="${config.title || 'Nákup'}">
+                        <button class="btn" @click=${this._syncToKeep}>Synchronizovat</button>
+                    </div>
                 </div>
             </section>
         `;
-    }
-
-    _syncToKeep() {
-        const username = this.shadowRoot.getElementById('keep-user').value;
-        const password = this.shadowRoot.getElementById('keep-pass').value;
-        const title = this.shadowRoot.getElementById('keep-title').value;
-        
-        this.hass.callService("shopping_list_ocr", "sync_to_keep", {
-            username: username,
-            password: password,
-            title: title
-        });
-        this.hass.bus.async_fire("hass-notification", { message: "Synchronizace s Google Keep spuštěna..." });
     }
 
     async _handleUpload(e) {
@@ -231,7 +225,7 @@ class ShoppingListPanel extends LitElement {
         this.hass.bus.async_fire("hass-notification", { message: "Nahrávám účtenku..." });
         try {
             const response = await this.hass.fetchWithAuth("/api/shopping_list/upload", { method: "POST", body: formData });
-            if (response.ok) { this.hass.bus.async_fire("hass-notification", { message: "Zpracovávám..." }); setTimeout(() => this._fetchData(), 2000); }
+            if (response.ok) { this.hass.bus.async_fire("hass-notification", { message: "Zpracovávám sken..." }); setTimeout(() => this._fetchData(), 3000); }
         } catch (err) { console.error("Upload failed:", err); }
     }
 
@@ -242,10 +236,15 @@ class ShoppingListPanel extends LitElement {
     }
 
     _startScanner() {
-        this.html5QrCode = new Html5Qrcode("reader");
-        this.html5QrCode.start({ facingMode: "environment" }, { fps: 10, qrbox: { width: 250, height: 150 } }, (decodedText) => {
-            this._toggleScanner(); this._addByEanValue(decodedText);
-        });
+        try {
+            this.html5QrCode = new Html5Qrcode("reader");
+            this.html5QrCode.start({ facingMode: "environment" }, { fps: 10, qrbox: { width: 250, height: 150 } }, (decodedText) => {
+                this._toggleScanner(); this._addByEanValue(decodedText);
+            }).catch(err => {
+                console.error("Scanner failed:", err);
+                this.hass.bus.async_fire("hass-notification", { message: "Chyba kamery. Ujistěte se, že používáte HTTPS." });
+            });
+        } catch (e) { console.error(e); }
     }
 
     _addByEan() { const input = this.shadowRoot.getElementById('ean-input'); this._addByEanValue(input.value.trim()); input.value = ""; }
@@ -260,6 +259,12 @@ class ShoppingListPanel extends LitElement {
     }
     _addRecipe() { const input = this.shadowRoot.getElementById('recipe-url'); this.hass.callService("shopping_list_ocr", "add_recipe", { url: input.value.trim() }); input.value = ""; }
     _addIngredientsToShoppingList(recipe) { recipe.ingredients.forEach(ing => this.hass.callService("shopping_list", "add_item", { name: ing })); }
+    _syncToKeep() {
+        const username = this.shadowRoot.getElementById('keep-user').value;
+        const password = this.shadowRoot.getElementById('keep-pass').value;
+        const title = this.shadowRoot.getElementById('keep-title').value;
+        this.hass.callService("shopping_list_ocr", "sync_to_keep", { username, password, title });
+    }
 }
 
 customElements.define("shopping-list-panel", ShoppingListPanel);

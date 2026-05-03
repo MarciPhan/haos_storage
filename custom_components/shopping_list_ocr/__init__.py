@@ -4,6 +4,7 @@ import uuid
 import datetime
 import re
 import aiohttp
+import time
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers.storage import Store
 from homeassistant.components.http import HomeAssistantView
@@ -15,7 +16,6 @@ from .api import process_receipt_image, fetch_recipe_content, find_product_image
 _LOGGER = logging.getLogger(__name__)
 
 async def download_font(hass: HomeAssistant, target_path: str):
-    """Download a Unicode font if missing."""
     url = "https://github.com/mzyy94/DejaVuSans.ttf/raw/master/DejaVuSans.ttf"
     try:
         os.makedirs(os.path.dirname(target_path), exist_ok=True)
@@ -23,12 +23,9 @@ async def download_font(hass: HomeAssistant, target_path: str):
             async with session.get(url, timeout=30) as response:
                 if response.status == 200:
                     content = await response.read()
-                    with open(target_path, "wb") as f:
-                        f.write(content)
-                    _LOGGER.info("Successfully downloaded Unicode font to %s", target_path)
+                    with open(target_path, "wb") as f: f.write(content)
                     return True
-    except Exception as e:
-        _LOGGER.error("Failed to download font: %s", e)
+    except: pass
     return False
 
 class ShoppingListPanelView(HomeAssistantView):
@@ -63,7 +60,7 @@ class ShoppingListUploadView(HomeAssistantView):
         with open(file_path, "wb") as f: f.write(file.file.read())
         hass = request.app["hass"]
         await hass.services.async_call(DOMAIN, "scan_receipt", {"image_path": file_path})
-        return web.json_response({"success": True, "file_path": file_path})
+        return web.json_response({"success": True})
 
 class RecipePdfView(HomeAssistantView):
     url = "/shopping_list_static/recipes/{recipe_id}.pdf"
@@ -79,7 +76,6 @@ async def async_setup_entry(hass: HomeAssistant, entry):
     data = await store.async_load() or {"inventory": {}, "pending_receipts": {}, "recipes": {}, "keep_config": {}}
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = data
-
     local_font_path = os.path.join(os.path.dirname(__file__), "www", "DejaVuSans.ttf")
 
     async def handle_scan_receipt(call: ServiceCall):
@@ -154,9 +150,8 @@ async def async_setup_entry(hass: HomeAssistant, entry):
                 keep.login(username, password)
                 note = next((n for n in keep.find(archived=False, trashed=False) if n.title == note_title), None)
                 if not note: note = keep.createList(note_title)
-                items_to_add = []
                 sl_items = hass.data.get("shopping_list")
-                if sl_items: items_to_add = [item["name"] for item in sl_items.items if not item["complete"]]
+                items_to_add = [item["name"] for item in sl_items.items if not item["complete"]] if sl_items else []
                 for item in note.items: item.delete()
                 for item_name in items_to_add: note.add(item_name, False)
                 keep.sync(); return True
@@ -167,26 +162,17 @@ async def async_setup_entry(hass: HomeAssistant, entry):
         url = call.data.get("url")
         recipe_data = await fetch_recipe_content(hass, url)
         if not recipe_data: return
-        recipe_id = str(uuid.uuid4())
-        pdf_path = os.path.join(os.path.dirname(__file__), "www", "recipes", f"{recipe_id}.pdf")
-        
-        # Ensure font exists before generating PDF
-        if not os.path.exists(local_font_path):
-            await download_font(hass, local_font_path)
-
+        recipe_id = str(uuid.uuid4()); pdf_path = os.path.join(os.path.dirname(__file__), "www", "recipes", f"{recipe_id}.pdf")
+        if not os.path.exists(local_font_path): await download_font(hass, local_font_path)
         def generate_pdf():
             from fpdf import FPDF
-            pdf = FPDF()
-            pdf.add_page()
-            font_loaded = False
-            # Check local font first, then system
+            pdf = FPDF(); pdf.add_page(); font_loaded = False
             test_paths = [local_font_path, "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"]
             for fp in test_paths:
                 if os.path.exists(fp):
                     try: pdf.add_font("DejaVu", "", fp); pdf.set_font("DejaVu", size=16); font_loaded = True; break
                     except: pass
             if not font_loaded: pdf.set_font("Helvetica", style="B", size=16)
-            
             pdf.cell(190, 10, txt=recipe_data["title"], ln=True, align='C'); pdf.ln(10)
             pdf.set_font("Helvetica" if not font_loaded else "DejaVu", size=14)
             pdf.cell(190, 10, txt="Ingredience:", ln=True); pdf.set_font("Helvetica" if not font_loaded else "DejaVu", size=12)
@@ -194,7 +180,6 @@ async def async_setup_entry(hass: HomeAssistant, entry):
             pdf.ln(10); pdf.set_font("Helvetica" if not font_loaded else "DejaVu", size=14)
             pdf.cell(190, 10, txt="Postup:", ln=True); pdf.set_font("Helvetica" if not font_loaded else "DejaVu", size=12)
             pdf.multi_cell(190, 10, txt=recipe_data["instructions"]); pdf.output(pdf_path)
-
         await hass.async_add_executor_job(generate_pdf)
         data["recipes"][recipe_id] = {
             "id": recipe_id, "title": recipe_data["title"], "ingredients": recipe_data["ingredients"],
@@ -220,7 +205,10 @@ async def async_setup_entry(hass: HomeAssistant, entry):
         from homeassistant.components.frontend import async_register_built_in_panel
         async_register_built_in_panel(
             hass, component_name="custom", sidebar_title="Nákupník", sidebar_icon="mdi:cart-outline", frontend_url_path="shopping-list-ocr",
-            config={"_panel_custom": {"name": "shopping-list-panel", "module_url": "/shopping_list_static/panel.js"}}, require_admin=False,
+            config={"_panel_custom": {
+                "name": "shopping-list-panel", 
+                "module_url": f"/shopping_list_static/panel.js?v={time.time()}"
+            }}, require_admin=False,
         )
     except: pass
     return True
