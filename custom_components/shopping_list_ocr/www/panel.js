@@ -5,8 +5,8 @@ const CATS=["","Ovoce a zelenina","Mléčné výrobky","Maso a ryby","Pečivo","
 const LOCS=["","Lednice","Mrazák","Spíž","Skříňka","Koupelna"];
 
 class ShoppingListPanel extends LitElement{
-static get properties(){return{hass:{type:Object},data:{type:Object},tab:{type:String},scan:{type:Boolean},search:{type:String},filterCat:{type:String},filterLoc:{type:String},editing:{type:String},toast:{type:String}};}
-constructor(){super();this.data={inventory:{},pending_receipts:{},recipes:{},consumption_log:[]};this.tab="dashboard";this.scan=false;this.search="";this.filterCat="";this.filterLoc="";this.editing="";this.toast="";this._sc=null;}
+static get properties(){return{hass:{type:Object},data:{type:Object},tab:{type:String},scan:{type:Boolean},search:{type:String},filterCat:{type:String},filterLoc:{type:String},editing:{type:String},toast:{type:String},uploadState:{type:String},uploadPreview:{type:String},uploadProgress:{type:Number}};}
+constructor(){super();this.data={inventory:{},pending_receipts:{},recipes:{},consumption_log:[]};this.tab="dashboard";this.scan=false;this.search="";this.filterCat="";this.filterLoc="";this.editing="";this.toast="";this._sc=null;this.uploadState="";this.uploadPreview="";this.uploadProgress=0;}
 connectedCallback(){super.connectedCallback();this._fetch();this.hass?.connection?.subscribeEvents(()=>this._fetch(),"shopping_list_ocr_updated");}
 async _fetch(){if(!this.hass)return;try{const r=await this.hass.fetchWithAuth("/api/shopping_list/data");if(r.ok)this.data=await r.json();}catch(e){}}
 _t(m){this.toast=m;setTimeout(()=>{this.toast=""},3500);}
@@ -59,8 +59,20 @@ static get styles(){return css`
 .stat-lbl{font-size:.8rem;color:var(--dim)}
 .edit-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
 .edit-row select,.edit-row input{padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:rgba(255,255,255,.04);color:inherit;font-size:.8rem;flex:1;min-width:80px}
+.upl-card{background:var(--card-background-color,var(--card));border-radius:12px;border:1px solid var(--border);overflow:hidden;margin-bottom:20px}
+.upl-preview{width:100%;max-height:200px;object-fit:cover;display:block}
+.upl-body{padding:16px;display:flex;flex-direction:column;gap:10px}
+.upl-status{font-size:.85rem;font-weight:600;display:flex;align-items:center;gap:8px}
+.upl-bar-wrap{width:100%;height:8px;background:rgba(255,255,255,.08);border-radius:4px;overflow:hidden}
+.upl-bar{height:100%;border-radius:4px;transition:width .4s ease;background:linear-gradient(90deg,var(--a),#818cf8)}
+.upl-bar.done{background:var(--g)}
+.upl-bar.err{background:var(--r)}
+.upl-steps{display:flex;gap:4px;align-items:center;margin-top:4px}
+.upl-step{flex:1;height:4px;border-radius:2px;background:rgba(255,255,255,.08)}
+.upl-step.active{background:var(--a);animation:pulse 1.5s infinite}
+.upl-step.done{background:var(--g)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
 `;}
-
 render(){const inv=Object.values(this.data.inventory||{});const pc=Object.keys(this.data.pending_receipts||{}).length;
 return html`<div class="p">
 <div class="hdr"><h1><ha-icon icon="mdi:cart-outline"></ha-icon> Nákupník</h1>
@@ -165,10 +177,29 @@ _rec(){const rr=Object.values(this.data.pending_receipts||{});
 return html`<section>
 <div class="tbar">
 <input type="file" id="rf" accept="image/*" capture="environment" style="display:none" @change=${this._upload}>
-<button class="btn bg" @click=${()=>this.shadowRoot.getElementById('rf').click()}><ha-icon icon="mdi:camera"></ha-icon> Nahrát účtenku</button>
+<button class="btn bg" @click=${()=>this.shadowRoot.getElementById('rf').click()} ?disabled=${!!this.uploadState}><ha-icon icon="mdi:camera"></ha-icon> ${this.uploadState?'Zpracovávám…':'Nahrát účtenku'}</button>
 <button class="btn bo" @click=${()=>{this._svc("scan_folder",{});this._t("Skenování…");setTimeout(()=>this._fetch(),4000);}}><ha-icon icon="mdi:folder-search-outline"></ha-icon> Složka</button>
 </div>
-${rr.length===0?html`<div class="empty"><p><strong>Žádné účtenky</strong></p></div>`:html`<div class="gr">${rr.map(r=>html`
+${this.uploadState?html`
+<div class="upl-card">
+${this.uploadPreview?html`<img class="upl-preview" src="${this.uploadPreview}">`:''}
+<div class="upl-body">
+<div class="upl-status">
+${this.uploadState==='uploading'?html`<ha-icon icon="mdi:cloud-upload"></ha-icon> Nahrávám fotku…`:''}
+${this.uploadState==='processing'?html`<ha-icon icon="mdi:text-recognition"></ha-icon> OCR zpracování…`:''}
+${this.uploadState==='done'?html`<ha-icon icon="mdi:check-circle" style="color:var(--g)"></ha-icon> <span style="color:var(--g)">Hotovo!</span>`:''}
+${this.uploadState==='error'?html`<ha-icon icon="mdi:alert-circle" style="color:var(--r)"></ha-icon> <span style="color:var(--r)">Chyba zpracování</span>`:''}
+</div>
+<div class="upl-bar-wrap"><div class="upl-bar ${this.uploadState==='done'?'done':''} ${this.uploadState==='error'?'err':''}" style="width:${this.uploadProgress}%"></div></div>
+<div class="upl-steps">
+<div class="upl-step ${this.uploadProgress>=33?'done':this.uploadState==='uploading'?'active':''}"></div>
+<div class="upl-step ${this.uploadProgress>=66?'done':this.uploadState==='processing'?'active':''}"></div>
+<div class="upl-step ${this.uploadProgress>=100?'done':''}"></div>
+</div>
+<div class="cm">${this.uploadState==='uploading'?'Odesílám na server…':this.uploadState==='processing'?'Rozpoznávám text na účtence…':this.uploadState==='done'?'Účtenka byla úspěšně zpracována':this.uploadState==='error'?'Zkuste to znovu s lepší fotkou':''}  </div>
+</div>
+</div>`:''}
+${rr.length===0&&!this.uploadState?html`<div class="empty"><p><strong>Žádné účtenky</strong></p><p>Nahrajte fotku účtenky tlačítkem výše.</p></div>`:html`<div class="gr">${rr.map(r=>html`
 <div class="c">${r.store?html`<span class="st">${r.store}</span>`:''}<div class="cb">
 <div class="cm">${new Date(r.date).toLocaleString("cs")}</div>
 ${r.items.map(i=>html`<div class="ri"><span>${i.name}</span><span style="font-weight:600">${i.price} Kč</span></div>`)}
@@ -192,8 +223,40 @@ ${rr.length===0?html`<div class="empty"><p><strong>Žádné recepty</strong></p>
 </section>`;}
 
 // --- Actions ---
-async _upload(e){const f=e.target.files?.[0];if(!f)return;const fd=new FormData();fd.append("file",f);this._t("Nahrávám…");
-try{const r=await this.hass.fetchWithAuth("/api/shopping_list/upload",{method:"POST",body:fd});if(r.ok){this._t("Zpracovávám…");setTimeout(()=>this._fetch(),3000);}else this._t("Chyba");}catch(e){this._t("Chyba");}e.target.value="";}
+async _upload(e){
+const f=e.target.files?.[0];if(!f)return;
+// Show preview
+this.uploadPreview=URL.createObjectURL(f);
+this.uploadState="uploading";this.uploadProgress=10;this.tab="receipts";
+const fd=new FormData();fd.append("file",f);
+// Animate upload progress
+const pInt=setInterval(()=>{if(this.uploadProgress<30)this.uploadProgress+=4;},200);
+try{
+const r=await this.hass.fetchWithAuth("/api/shopping_list/upload",{method:"POST",body:fd});
+clearInterval(pInt);
+if(r.ok){
+this.uploadState="processing";this.uploadProgress=40;
+// Animate OCR processing
+const oInt=setInterval(()=>{if(this.uploadProgress<85)this.uploadProgress+=3;},400);
+// Poll for new receipts (OCR is async on backend)
+const startCount=Object.keys(this.data.pending_receipts||{}).length;
+let attempts=0;const maxAttempts=20;
+const poll=setInterval(async()=>{
+attempts++;
+await this._fetch();
+const newCount=Object.keys(this.data.pending_receipts||{}).length;
+if(newCount>startCount||attempts>=maxAttempts){
+clearInterval(oInt);clearInterval(poll);
+if(newCount>startCount){this.uploadState="done";this.uploadProgress=100;
+setTimeout(()=>{this.uploadState="";this.uploadPreview="";this.uploadProgress=0;},4000);
+}else{this.uploadState="error";this.uploadProgress=100;
+setTimeout(()=>{this.uploadState="";this.uploadPreview="";this.uploadProgress=0;},5000);
+}}},2000);
+}else{this.uploadState="error";this.uploadProgress=100;
+setTimeout(()=>{this.uploadState="";this.uploadPreview="";this.uploadProgress=0;},5000);}
+}catch(err){clearInterval(pInt);this.uploadState="error";this.uploadProgress=100;
+setTimeout(()=>{this.uploadState="";this.uploadPreview="";this.uploadProgress=0;},5000);}
+e.target.value="";}
 
 _toggleScan(){this.scan=!this.scan;if(this.scan){if(!_scanOk){this._t("Skener se načítá…");this.scan=false;return;}setTimeout(()=>{try{this._sc=new Html5Qrcode("reader");this._sc.start({facingMode:"environment"},{fps:10,qrbox:{width:250,height:150}},(t)=>{this._toggleScan();this._addEanVal(t);}).catch(()=>{this._t("Kamera nedostupná");this.scan=false;});}catch(e){this.scan=false;}},400);}else if(this._sc){try{this._sc.stop();}catch(e){}this._sc=null;}}
 

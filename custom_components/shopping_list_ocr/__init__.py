@@ -32,14 +32,22 @@ async def _ensure_font(target_path: str) -> bool:
     if os.path.isfile(target_path):
         return True
     os.makedirs(os.path.dirname(target_path), exist_ok=True)
+    urls = [
+        FONT_URL,
+        "https://raw.githubusercontent.com/dejavu-fonts/dejavu-fonts/master/ttf/DejaVuSans.ttf"
+    ]
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(FONT_URL, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-                if resp.status == 200:
-                    with open(target_path, "wb") as f:
-                        f.write(await resp.read())
-                    _LOGGER.info("Downloaded DejaVuSans font to %s", target_path)
-                    return True
+            for url in urls:
+                try:
+                    async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                        if resp.status == 200:
+                            with open(target_path, "wb") as f:
+                                f.write(await resp.read())
+                            _LOGGER.info("Downloaded DejaVuSans font from %s to %s", url, target_path)
+                            return True
+                except Exception as inner_exc:
+                    _LOGGER.debug("Failed to download font from %s: %s", url, inner_exc)
     except Exception as exc:
         _LOGGER.error("Failed to download font: %s", exc)
     return False
@@ -398,8 +406,9 @@ async def async_setup_entry(hass: HomeAssistant, entry):
             pdf.set_font(font_name, size=14)
             pdf.cell(190, 10, txt="Ingredience:", ln=True)
             pdf.set_font(font_name, size=11)
+            bullet = "\u2022" if font_name == "DejaVu" else "-"
             for ing in recipe_data.get("ingredients", []):
-                pdf.multi_cell(180, 7, txt=f"  \u2022 {ing}")
+                pdf.multi_cell(180, 7, txt=f"  {bullet} {ing}")
             pdf.ln(6)
 
             # Instructions
