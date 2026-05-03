@@ -93,6 +93,12 @@ async def process_receipt_image(hass: HomeAssistant, image_path: str) -> list[di
 def _parse_receipt_text(text: str) -> list[dict]:
     """Extract (name, price, quantity) tuples from OCR output."""
     items: list[dict] = []
+    
+    # Matches a price at the end of the line. e.g. "29,90 B", "1 250.00", "45", "12,90CZK"
+    # Group 1: Item name (everything before the price)
+    # Group 2: The price string
+    item_re = re.compile(r"^(.*?)\s+((?:\d[\d\s]*[,.]\s*\d{1,2}|\d{1,4}))\s*(?:K[CcčČ]|CZK|A|B|C|E|%)?\s*$", re.IGNORECASE)
+
     for line in text.splitlines():
         line = line.strip()
         if len(line) < 4:
@@ -101,11 +107,17 @@ def _parse_receipt_text(text: str) -> list[dict]:
         if any(w in upper for w in _SKIP_WORDS):
             continue
 
-        m = _ITEM_RE.match(line)
+        m = item_re.match(line)
         if not m:
             continue
 
         name = m.group(1).strip()
+        if len(name) < 3:
+            continue
+            
+        # Clean up the name (remove leading quantities like "1x ")
+        name = re.sub(r"^\d+\s*[xX]\s*", "", name).strip()
+
         price_str = m.group(2).replace(" ", "").replace(",", ".")
         try:
             price = float(price_str)
