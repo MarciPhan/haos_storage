@@ -1,4 +1,5 @@
 {
-  "name": "Knihovnička",
-  "render_readme": true
+  "name": "Nákupník",
+  "render_readme": true,
+  "country": "CZ"
 }

@@ -1,33 +1,20 @@
-# 📚 Knihovnička (Bookcase) pro Home Assistant
+# Nákupník (Shopping List OCR & Inventory)
 
-Profesionální integrace pro správu vaší osobní knihovny přímo v Home Assistantovi. Sledujte své knihy, hodnoťte je a sdílejte svou vášeň pro čtení s ostatními členy domácnosti.
-
-![Knihovnička Icon](custom_components/bookcase/icon.png)
+Profesionální integrace pro Home Assistant, která kombinuje OCR skenování účtenek, správu domácího skladu a knihovnu receptů s automatickou generací PDF.
 
 ## ✨ Hlavní funkce
-- **Automatické načítání metadat**: Stačí zadat ISBN nebo starý kód publikace (např. 23-058-65). Integrace čerpá z mnoha zdrojů:
-  - **Národní knihovna ČR (NKP)**
-  - **Knihovny.cz**
-  - **Databazeknih.cz**
-  - **Google Books** a **Open Library**
-  - **Martinus.cz** a **Didasko.cz**
-- **Podpora více uživatelů**: Každý člen domácnosti může mít vlastní hodnocení, poznámky a status u stejné knihy. Data se inteligentně slučují.
-- **Sledování stavu**: Mějte přehled o tom, co máte v knihovně, co právě čtete, co je na vašem wishlistu nebo co jste už přečetli.
-- **Evidence půjčování**: Sledujte, komu a do kdy jste své knihy půjčili.
-- **Statistiky a senzory**: Automatické senzory pro celkový počet knih, přečtené kusy, oblíbené autory atd.
-- **Moderní UI**: Krásný, responsivní panel s podporou tmavého režimu a okamžitou odezvou (Optimistic UI).
+- **Skenování účtenek (OCR)**: Automatické rozpoznání položek a cen z fotografií (podpora pro Tesco, Lidl, Albert a další).
+- **Správa skladu (Grocy-like)**: Sledování zásob, historie cen a automatické doplňování z účtenek.
+- **Knihovna receptů**: Stahování receptů z URL, automatická extrakce ingrediencí a generování PDF dokumentů s českou diakritikou.
+- **Integrace s nákupním seznamem**: Přidávání chybějících ingrediencí do standardního nákupního seznamu HA jedním kliknutím.
+- **Moderní UI**: Přehledný panel se záložkami a náhledy produktů/receptů.
 
 ## 🚀 Instalace
-1. Zkopírujte složku `custom_components/bookcase` do vašeho adresáře `config` v HA.
+1. Zkopírujte složku `custom_components/shopping_list_ocr` do vašeho adresáře `config` v HA.
 2. Restartujte Home Assistant.
-3. Přidejte integraci "Knihovnička" v nastavení (Nastavení -> Zařízení a služby -> Přidat integraci).
+3. Přidejte integraci "Nákupník" v nastavení.
 
 ## 🛠 Služby
-- `bookcase.add_by_isbn`: Přidá knihu pomocí ISBN nebo jiného identifikátoru.
-- `bookcase.add_manual`: Ruční přidání knihy bez identifikátoru.
-- `bookcase.update_book`: Aktualizace statusu, hodnocení nebo poznámek.
-- `bookcase.delete_book`: Odstranění knihy z knihovny.
-
-## 📄 Licence
-Tento projekt je licencován pod MIT licencí.
-
+- `shopping_list_ocr.scan_receipt`: Skenování jedné účtenky.
+- `shopping_list_ocr.scan_folder`: Hromadné skenování složky s obrázky.
+- `shopping_list_ocr.add_recipe`: Stažení receptu z URL a vytvoření PDF.
