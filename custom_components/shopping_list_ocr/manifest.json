@@ -2,18 +2,10 @@
   "domain": "shopping_list_ocr",
   "name": "Nákupník",
   "documentation": "https://github.com/MarciPhan/haos_storage",
-  "dependencies": [
-    "http",
-    "frontend",
-    "panel_custom"
-  ],
-  "requirements": [
-    "fpdf2==2.7.4",
-    "beautifulsoup4==4.12.2",
-    "gkeepapi==0.14.3"
-  ],
+  "dependencies": ["http", "frontend", "panel_custom"],
+  "requirements": ["fpdf2==2.7.4", "beautifulsoup4==4.12.2", "gkeepapi==0.14.3"],
   "codeowners": ["@MarciPhan"],
   "iot_class": "local_push",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "config_flow": true
 }
