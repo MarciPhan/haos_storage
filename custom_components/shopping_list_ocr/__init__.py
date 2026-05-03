@@ -33,30 +33,19 @@ class ShoppingListDataView(HomeAssistantView):
         return web.json_response(self._data)
 
 class ShoppingListUploadView(HomeAssistantView):
-    """View to handle receipt image uploads."""
     url = "/api/shopping_list/upload"
     name = "api:shopping_list:upload"
     requires_auth = True
-
     async def post(self, request):
         from aiohttp import web
-        data = await request.post()
-        file = data.get("file")
+        data = await request.post(); file = data.get("file")
         if not file: return web.json_response({"error": "No file"}, status=400)
-
-        folder_path = "/config/www/uctenky/"
-        os.makedirs(folder_path, exist_ok=True)
+        folder_path = "/config/www/uctenky/"; os.makedirs(folder_path, exist_ok=True)
         filename = f"upload_{dt_util.now().strftime('%Y%m%d_%H%M%S')}_{file.filename}"
         file_path = os.path.join(folder_path, filename)
-
-        with open(file_path, "wb") as f:
-            content = file.file.read()
-            f.write(content)
-
-        # Trigger scan automatically
+        with open(file_path, "wb") as f: f.write(file.file.read())
         hass = request.app["hass"]
         await hass.services.async_call(DOMAIN, "scan_receipt", {"image_path": file_path})
-        
         return web.json_response({"success": True, "file_path": file_path})
 
 class RecipePdfView(HomeAssistantView):
@@ -71,8 +60,9 @@ class RecipePdfView(HomeAssistantView):
 
 async def async_setup_entry(hass: HomeAssistant, entry):
     store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
-    data = await store.async_load() or {"inventory": {}, "pending_receipts": {}, "recipes": {}}
+    data = await store.async_load() or {"inventory": {}, "pending_receipts": {}, "recipes": {}, "keep_config": {}}
     if "recipes" not in data: data["recipes"] = {}
+    if "keep_config" not in data: data["keep_config"] = {}
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = data
 
@@ -149,6 +139,62 @@ async def async_setup_entry(hass: HomeAssistant, entry):
                 }
             await store.async_save(data); hass.bus.async_fire(EVENT_RECEIPTS_UPDATED)
 
+    async def handle_sync_to_keep(call: ServiceCall):
+        """Sync current shopping list to Google Keep."""
+        import gkeepapi
+        username = call.data.get("username") or data["keep_config"].get("username")
+        password = call.data.get("password") or data["keep_config"].get("password")
+        note_title = call.data.get("title") or data["keep_config"].get("title") or "Nákup"
+        
+        if not username or not password:
+            _LOGGER.error("Google Keep credentials missing")
+            return
+
+        # Save config if provided
+        if call.data.get("username"):
+            data["keep_config"] = {"username": username, "password": password, "title": note_title}
+            await store.async_save(data)
+
+        def sync():
+            keep = gkeepapi.Keep()
+            try:
+                # Login (requires App Password)
+                keep.login(username, password)
+                
+                # Find or create note
+                note = None
+                notes = keep.find(archived=False, trashed=False)
+                for n in notes:
+                    if n.title == note_title:
+                        note = n
+                        break
+                
+                if not note:
+                    note = keep.createList(note_title)
+                
+                # Get items to sync (e.g. from standard shopping_list)
+                # For now, let's sync everything from 'shopping_list' integration
+                # if it exists, or just a sample.
+                items_to_add = []
+                sl_items = hass.data.get("shopping_list")
+                if sl_items:
+                    items_to_add = [item["name"] for item in sl_items.items if not item["complete"]]
+                
+                # Update Keep list
+                # Clear existing items and add new ones
+                for item in note.items: item.delete()
+                for item_name in items_to_add:
+                    note.add(item_name, False)
+                
+                keep.sync()
+                _LOGGER.info("Successfully synced %d items to Google Keep", len(items_to_add))
+                return True
+            except Exception as e:
+                _LOGGER.error("Error syncing to Google Keep: %s", e)
+                return False
+
+        await hass.async_add_executor_job(sync)
+
     async def handle_add_recipe(call: ServiceCall):
         url = call.data.get("url")
         recipe_data = await fetch_recipe_content(hass, url)
@@ -181,13 +227,13 @@ async def async_setup_entry(hass: HomeAssistant, entry):
         }
         await store.async_save(data); hass.bus.async_fire(EVENT_RECEIPTS_UPDATED)
 
-    # Registrace služeb a view
     hass.services.async_register(DOMAIN, "scan_receipt", handle_scan_receipt)
     hass.services.async_register(DOMAIN, "scan_folder", handle_scan_folder)
     hass.services.async_register(DOMAIN, "confirm_receipt", handle_confirm_receipt)
     hass.services.async_register(DOMAIN, "update_inventory", handle_update_inventory)
     hass.services.async_register(DOMAIN, "add_item_by_ean", handle_add_item_by_ean)
     hass.services.async_register(DOMAIN, "add_recipe", handle_add_recipe)
+    hass.services.async_register(DOMAIN, "sync_to_keep", handle_sync_to_keep)
     
     hass.http.register_view(ShoppingListPanelView())
     hass.http.register_view(ShoppingListDataView(data))
