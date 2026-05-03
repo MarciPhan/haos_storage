@@ -108,32 +108,9 @@ class ShoppingListPanel extends LitElement {
                 display: flex;
                 flex-direction: column;
             }
-            .card:hover {
-                transform: translateY(-4px);
-            }
-            .card-content {
-                padding: 16px;
-                display: flex;
-                flex-direction: column;
-                flex: 1;
-            }
-            .card-img {
-                width: 100%;
-                height: 160px;
-                object-fit: cover;
-                background: var(--secondary-background-color);
-            }
-            .store-badge {
-                position: absolute;
-                top: 12px;
-                right: 12px;
-                background: rgba(0,0,0,0.6);
-                color: white;
-                padding: 4px 8px;
-                border-radius: 4px;
-                font-size: 0.7rem;
-                font-weight: bold;
-            }
+            .card:hover { transform: translateY(-4px); }
+            .card-content { padding: 16px; display: flex; flex-direction: column; flex: 1; }
+            .card-img { width: 100%; height: 160px; object-fit: cover; background: var(--secondary-background-color); }
             .btn {
                 background: var(--accent-color);
                 color: white;
@@ -162,7 +139,7 @@ class ShoppingListPanel extends LitElement {
                 gap: 16px;
                 box-shadow: 0 2px 10px rgba(0,0,0,0.05);
             }
-            input {
+            input[type="text"] {
                 flex: 1;
                 padding: 12px;
                 border-radius: 8px;
@@ -171,34 +148,14 @@ class ShoppingListPanel extends LitElement {
                 color: var(--primary-text-color);
             }
 
-            /* Scanner Modal */
             .modal {
-                position: fixed;
-                top: 0; left: 0; right: 0; bottom: 0;
+                position: fixed; top: 0; left: 0; right: 0; bottom: 0;
                 background: rgba(0,0,0,0.8);
-                display: flex;
-                flex-direction: column;
-                align-items: center;
-                justify-content: center;
-                z-index: 9999;
-                padding: 20px;
+                display: flex; flex-direction: column; align-items: center; justify-content: center;
+                z-index: 9999; padding: 20px;
             }
-            #reader {
-                width: 100%;
-                max-width: 500px;
-                background: white;
-                border-radius: 12px;
-                overflow: hidden;
-            }
-            .modal-close {
-                margin-top: 20px;
-                padding: 10px 30px;
-                background: white;
-                color: black;
-                border-radius: 30px;
-                font-weight: bold;
-                cursor: pointer;
-            }
+            #reader { width: 100%; max-width: 500px; background: white; border-radius: 12px; overflow: hidden; }
+            .modal-close { margin-top: 20px; padding: 10px 30px; background: white; color: black; border-radius: 30px; font-weight: bold; cursor: pointer; }
         `;
     }
 
@@ -266,8 +223,14 @@ class ShoppingListPanel extends LitElement {
         return html`
             <section>
                 <div class="toolbar">
-                    <div style="flex: 1">Nahráno v <code>/config/www/uctenky/</code></div>
-                    <button class="btn" style="width: auto; margin: 0" @click=${this._scanFolder}>Skenovat složku</button>
+                    <div style="flex: 1">Nahrajte novou účtenku z mobilu:</div>
+                    <input type="file" id="file-upload" style="display: none" accept="image/*" @change=${this._handleUpload}>
+                    <button class="btn" style="width: auto; margin: 0" @click=${() => this.shadowRoot.getElementById('file-upload').click()}>
+                        <ha-icon icon="mdi:upload"></ha-icon> Nahrát účtenku
+                    </button>
+                    <button class="btn btn-secondary" style="width: auto; margin: 0" @click=${this._scanFolder}>
+                        <ha-icon icon="mdi:refresh"></ha-icon> Skenovat složku
+                    </button>
                 </div>
                 <div class="grid">
                     ${receipts.map(receipt => html`
@@ -310,6 +273,29 @@ class ShoppingListPanel extends LitElement {
         `;
     }
 
+    async _handleUpload(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const formData = new FormData();
+        formData.append("file", file);
+
+        this.hass.bus.async_fire("hass-notification", { message: "Nahrávám a skenuji účtenku..." });
+
+        try {
+            const response = await this.hass.fetchWithAuth("/api/shopping_list/upload", {
+                method: "POST",
+                body: formData
+            });
+            if (response.ok) {
+                this.hass.bus.async_fire("hass-notification", { message: "Účtenka úspěšně nahrána a zpracována." });
+                setTimeout(() => this._fetchData(), 2000);
+            }
+        } catch (err) {
+            console.error("Upload failed:", err);
+        }
+    }
+
     _toggleScanner() {
         this.showScanner = !this.showScanner;
         if (this.showScanner) {
@@ -321,10 +307,9 @@ class ShoppingListPanel extends LitElement {
 
     _startScanner() {
         this.html5QrCode = new Html5Qrcode("reader");
-        const config = { fps: 10, qrbox: { width: 250, height: 150 } };
         this.html5QrCode.start(
             { facingMode: "environment" }, 
-            config, 
+            { fps: 10, qrbox: { width: 250, height: 150 } }, 
             (decodedText) => {
                 this._toggleScanner();
                 this._addByEanValue(decodedText);
@@ -341,7 +326,6 @@ class ShoppingListPanel extends LitElement {
     _addByEanValue(ean) {
         if (!ean) return;
         this.hass.callService("shopping_list_ocr", "add_item_by_ean", { ean: ean });
-        this.hass.bus.async_fire("hass-notification", { message: `Hledám produkt s EAN: ${ean}...` });
     }
 
     _confirmReceipt(id) { this.hass.callService("shopping_list_ocr", "confirm_receipt", { receipt_id: id }); }
