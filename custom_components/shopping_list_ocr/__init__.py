@@ -20,7 +20,7 @@ from .api import (
 
 _LOGGER = logging.getLogger(__name__)
 
-FONT_URL = "https://cdn.jsdelivr.net/gh/dejavu-fonts/dejavu-fonts/ttf/DejaVuSans.ttf"
+FONT_URL = "https://fonts.gstatic.com/s/roboto/v30/KFOmCnqEu92Fr1Me5Q.ttf"
 
 
 # ---------------------------------------------------------------------------
@@ -28,13 +28,13 @@ FONT_URL = "https://cdn.jsdelivr.net/gh/dejavu-fonts/dejavu-fonts/ttf/DejaVuSans
 # ---------------------------------------------------------------------------
 
 async def _ensure_font(target_path: str) -> bool:
-    """Download DejaVuSans.ttf if it doesn't exist locally."""
+    """Download Roboto-Regular.ttf if it doesn't exist locally."""
     if os.path.isfile(target_path):
         return True
     os.makedirs(os.path.dirname(target_path), exist_ok=True)
     urls = [
         FONT_URL,
-        "https://raw.githubusercontent.com/dejavu-fonts/dejavu-fonts/master/ttf/DejaVuSans.ttf"
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/roboto/Roboto-Regular.ttf"
     ]
     try:
         async with aiohttp.ClientSession() as session:
@@ -44,7 +44,7 @@ async def _ensure_font(target_path: str) -> bool:
                         if resp.status == 200:
                             with open(target_path, "wb") as f:
                                 f.write(await resp.read())
-                            _LOGGER.info("Downloaded DejaVuSans font from %s to %s", url, target_path)
+                            _LOGGER.info("Downloaded Roboto font from %s to %s", url, target_path)
                             return True
                 except Exception as inner_exc:
                     _LOGGER.debug("Failed to download font from %s: %s", url, inner_exc)
@@ -187,7 +187,7 @@ async def async_setup_entry(hass: HomeAssistant, entry):
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = data
 
-    local_font = os.path.join(os.path.dirname(__file__), "www", "DejaVuSans.ttf")
+    local_font = os.path.join(os.path.dirname(__file__), "www", "Roboto-Regular.ttf")
     recipes_dir = os.path.join(os.path.dirname(__file__), "www", "recipes")
     os.makedirs(recipes_dir, exist_ok=True)
 
@@ -386,14 +386,14 @@ async def async_setup_entry(hass: HomeAssistant, entry):
 
             font_path = _get_font_path(local_font)
             if font_path:
-                pdf.add_font("DejaVu", "", font_path)
-                font_name = "DejaVu"
+                pdf.add_font("Roboto", "", font_path)
+                font_name = "Roboto"
             else:
                 _LOGGER.warning("No Unicode font available; stripping accents to prevent crash")
                 font_name = "Helvetica"
 
             def sanitize(text):
-                if font_name == "DejaVu":
+                if font_name == "Roboto":
                     return text
                 # Normalize and remove accents/unsupported chars for Helvetica
                 return "".join(c for c in unicodedata.normalize("NFD", text) if unicodedata.category(c) != "Mn").encode("ascii", "ignore").decode("ascii")
@@ -413,7 +413,7 @@ async def async_setup_entry(hass: HomeAssistant, entry):
             pdf.set_font(font_name, size=14)
             pdf.cell(190, 10, txt=sanitize("Ingredience:"), ln=True)
             pdf.set_font(font_name, size=11)
-            bullet = "\u2022" if font_name == "DejaVu" else "-"
+            bullet = "\u2022" if font_name == "Roboto" else "-"
             for ing in recipe_data.get("ingredients", []):
                 pdf.multi_cell(180, 7, txt=sanitize(f"  {bullet} {ing}"))
             pdf.ln(6)
