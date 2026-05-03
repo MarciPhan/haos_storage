@@ -1,120 +1,116 @@
 import logging
-import re
-import os
-import easyocr
-import numpy as np
-from PIL import Image
 import aiohttp
+import asyncio
 from bs4 import BeautifulSoup
 from homeassistant.core import HomeAssistant
+import re
+import os
+import base64
 
 _LOGGER = logging.getLogger(__name__)
 
-# Cache pro EasyOCR reader, aby se nenačítal při každém skenování
-_READER = None
+# OCR.space API Free Key - for testing purposes
+# User should ideally get their own at ocr.space/ocrapi
+OCR_API_KEY = "[REDACTED]" 
 
-async def get_reader():
-    """Get or create the EasyOCR reader."""
-    global _READER
-    if _READER is None:
-        # Podporujeme češtinu a angličtinu
-        # Při prvním spuštění si to stáhne modely (cca 100MB)
-        _READER = easyocr.Reader(['cs', 'en'], gpu=False)
-    return _READER
-
-async def process_receipt_image(hass: HomeAssistant, image_path: str) -> list:
-    """Extract items and prices from a receipt image using EasyOCR."""
-    
-    def perform_ocr():
-        try:
-            import asyncio
-            # Spustíme reader v executoru
-            reader = easyocr.Reader(['cs', 'en'], gpu=False)
-            results = reader.readtext(image_path)
-            return results
-        except Exception as e:
-            _LOGGER.error("EasyOCR Error: %s", e)
+async def process_receipt_image(hass: HomeAssistant, image_path: str):
+    """Scan a receipt using OCR.space API (Lightweight alternative)."""
+    try:
+        if not os.path.exists(image_path):
+            _LOGGER.error("Image file %s not found", image_path)
             return []
 
-    # Použijeme executor, protože easyocr je CPU intenzivní a blokující
-    results = await hass.async_add_executor_job(perform_ocr)
-    if not results:
+        # Read and encode image to base64
+        with open(image_path, "rb") as f:
+            img_data = f.read()
+            base64_img = base64.b64encode(img_data).decode("utf-8")
+
+        _LOGGER.info("Sending receipt to OCR.space API...")
+        
+        url = "https://api.ocr.space/parse/image"
+        payload = {
+            "apikey": OCR_API_KEY,
+            "language": "cze",
+            "base64Image": f"data:image/jpeg;base64,{base64_img}",
+            "isOverlayRequired": False,
+            "FileType": ".jpg",
+            "detectOrientation": True,
+            "scale": True,
+            "OCREngine": 2 # Engine 2 is better for table-like structures
+        }
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, data=payload, timeout=30) as response:
+                if response.status != 200:
+                    _LOGGER.error("OCR API error: %d", response.status)
+                    return []
+                
+                result = await response.json()
+                
+                if result.get("OCRExitCode") != 1:
+                    _LOGGER.error("OCR API failed: %s", result.get("ErrorMessage"))
+                    return []
+
+                parsed_text = ""
+                for page in result.get("ParsedResults", []):
+                    parsed_text += page.get("ParsedText", "") + "\n"
+
+                _LOGGER.debug("Raw OCR text: %s", parsed_text)
+                return parse_receipt_text(parsed_text)
+
+    except Exception as e:
+        _LOGGER.error("Error during OCR processing: %s", e)
         return []
 
-    return parse_easyocr_results(results)
-
-def parse_easyocr_results(results: list) -> list:
-    """Parse EasyOCR results into a list of items and prices.
-    Results is a list of tuples: (bbox, text, confidence)
-    """
+def parse_receipt_text(text):
+    """Extract items and prices from raw OCR text."""
     items = []
+    lines = text.split('\n')
     
-    # Sloučíme text do řádků na základě y-souřadnice bboxu
-    # EasyOCR vrací jednotlivá slova/bloky, musíme je dát k sobě
-    lines = []
-    current_line = []
-    last_y = -1
-    threshold = 10 # Tolerance pro stejný řádek v pixelech
-    
-    # Seřadíme výsledky podle y-souřadnice horního levého rohu
-    sorted_results = sorted(results, key=lambda x: x[0][0][1])
-    
-    for (bbox, text, prob) in sorted_results:
-        y = bbox[0][1]
-        if last_y == -1 or abs(y - last_y) <= threshold:
-            current_line.append((bbox[0][0], text)) # (x, text)
-        else:
-            # Nový řádek - seřadíme ten starý podle x a spojíme ho
-            current_line.sort(key=lambda x: x[0])
-            lines.append(" ".join([t[1] for t in current_line]))
-            current_line = [(bbox[0][0], text)]
-        last_y = y
-        
-    if current_line:
-        current_line.sort(key=lambda x: x[0])
-        lines.append(" ".join([t[1] for t in current_line]))
-
-    # Regex pro vyhledání ceny
-    price_pattern = re.compile(r'(\d+[\.,]\s*\d{2})\s*(?:Kč|Kc|CZK)?\s*$', re.IGNORECASE)
+    # Common receipt patterns: ITEM NAME ... PRICE
+    # Example: "BRAMBORY 1kg 25.90" or "CHLEBA 34,00"
+    item_pattern = re.compile(r'(.+?)\s+([\d\s,.]+)[\sA-Z]*$')
     
     for line in lines:
         line = line.strip()
-        match = price_pattern.search(line)
+        if not line or len(line) < 3: continue
+        
+        # Skip common non-item lines
+        if any(x in line.upper() for x in ["CELKEM", "SOUCET", "PLATBA", "KARTOU", "DPH", "BDP", "FIK", "PKP"]):
+            continue
+            
+        match = item_pattern.search(line)
         if match:
-            price_str = match.group(1).replace(',', '.').replace(' ', '')
+            name = match.group(1).strip()
+            price_str = match.group(2).replace(',', '.').replace(' ', '')
             try:
                 price = float(price_str)
-                name = line[:match.start()].strip()
-                name = re.sub(r'^[*.\s-]+', '', name)
-                
-                if name and len(name) > 2:
+                if price > 0:
                     items.append({
                         "name": name,
                         "price": price,
-                        "quantity": 1,
-                        "unit": "ks"
+                        "quantity": 1
                     })
             except ValueError:
                 continue
                 
     return items
 
-async def fetch_recipe_content(hass: HomeAssistant, url: str) -> dict | None:
-    """Fetch and parse recipe from a URL."""
+async def fetch_recipe_content(hass: HomeAssistant, url: str):
+    """Fetch recipe content from a URL using BeautifulSoup."""
     try:
-        from homeassistant.helpers.aiohttp_client import async_get_clientsession
-        session = async_get_clientsession(hass)
-        
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-        }
-        
-        async with session.get(url, headers=headers, timeout=15, allow_redirects=True) as resp:
-            if resp.status != 200:
-                _LOGGER.error("Failed to fetch recipe from %s: %s", url, resp.status)
-                return None
-            html = await resp.text()
-            final_url = str(resp.url)
+        # Resolve share.google redirects if needed
+        final_url = url
+        if "share.google" in url:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, allow_redirects=True) as resp:
+                    final_url = str(resp.url)
+
+        async with aiohttp.ClientSession() as session:
+            async with session.get(final_url, timeout=10) as response:
+                if response.status != 200:
+                    return None
+                html = await response.text()
 
         soup = BeautifulSoup(html, 'html.parser')
         
@@ -148,66 +144,42 @@ async def fetch_recipe_content(hass: HomeAssistant, url: str) -> dict | None:
         # 2. Specific scrapers
         if "toprecepty.cz" in final_url:
             recipe["source"] = "Toprecepty.cz"
-            # Ingredients
-            ing_list = soup.find('ul', class_='ingredients-list')
-            if not ing_list:
-                ing_list = soup.find('div', class_='recept-ingredience')
-            
-            if ing_list:
-                for li in ing_list.find_all('li'):
-                    text = li.get_text().strip()
-                    if text:
-                        recipe["ingredients"].append(text)
-            
-            # Instructions
-            postup = soup.find('div', class_='postup')
-            if postup:
-                recipe["instructions"] = postup.get_text().strip()
+            for ing in soup.select('.recipe-ingredients__item'):
+                recipe["ingredients"].append(ing.get_text().strip())
+            instructions = soup.select_one('.recipe-instructions')
+            if instructions:
+                recipe["instructions"] = instructions.get_text().strip()
 
         elif "madebykristina.cz" in final_url:
             recipe["source"] = "Made by Kristina"
-            # Ingredients
-            suroviny_h2 = soup.find('h2', string=re.compile(r'Suroviny', re.I))
-            if suroviny_h2:
-                ul = suroviny_h2.find_next('ul')
-                if ul:
-                    for li in ul.find_all('li'):
-                        recipe["ingredients"].append(li.get_text().strip())
-            
-            # Instructions
-            postup_h2 = soup.find('h2', string=re.compile(r'Postup', re.I))
-            if postup_h2:
-                curr = postup_h2.find_next()
-                while curr and curr.name != 'h2':
-                    if curr.name in ['p', 'ol', 'ul']:
-                        recipe["instructions"] += curr.get_text().strip() + "\n\n"
-                    curr = curr.find_next_sibling()
-
+            for ing in soup.select('.ingredient-list li'):
+                recipe["ingredients"].append(ing.get_text().strip())
+            instructions = soup.select_one('.recipe-method')
+            if instructions:
+                recipe["instructions"] = instructions.get_text().strip()
+                
         elif "recepty.cz" in final_url:
             recipe["source"] = "Recepty.cz"
-            ing_div = soup.find('div', class_='ingredients')
-            if ing_div:
-                for li in ing_div.find_all('li'):
-                    recipe["ingredients"].append(li.get_text().strip())
-            
-            postup_div = soup.find('div', class_='preparation-process')
-            if postup_div:
-                recipe["instructions"] = postup_div.get_text().strip()
-
-        # Generic fallback
+            for ing in soup.select('.ingredients-list li'):
+                recipe["ingredients"].append(ing.get_text().strip())
+            instructions = soup.select_one('.postup-text')
+            if instructions:
+                recipe["instructions"] = instructions.get_text().strip()
+        
+        # General fallback if no specific scraper matched
         if not recipe["ingredients"]:
-            # Try to find any list that looks like ingredients
-            for ul in soup.find_all('ul'):
-                if any(word in (ul.get('class') or []) for word in ['ingredients', 'suroviny', 'ingredience']):
-                    for li in ul.find_all('li'):
-                        recipe["ingredients"].append(li.get_text().strip())
-                    break
+            # Try to find common structures
+            for li in soup.find_all('li'):
+                text = li.get_text().strip()
+                # Simple heuristic for ingredients (start with number or common units)
+                if re.match(r'^\d+|^\d+[\s\w]*\s(g|kg|ml|l|ks|lžíce|lžička)', text):
+                    recipe["ingredients"].append(text)
         
         if not recipe["instructions"]:
-            for div in soup.find_all(['div', 'section']):
-                if any(word in (div.get('class') or []) for word in ['instructions', 'postup', 'preparation']):
-                    recipe["instructions"] = div.get_text().strip()
-                    break
+            # Look for large text blocks
+            for p in soup.find_all('p'):
+                if len(p.get_text()) > 100:
+                    recipe["instructions"] += p.get_text().strip() + "\n\n"
 
         return recipe
 
@@ -218,18 +190,8 @@ async def fetch_recipe_content(hass: HomeAssistant, url: str) -> dict | None:
 async def find_product_image(hass: HomeAssistant, product_name: str, store: str = None) -> str:
     """Try to find an image for a product, optionally scoped by store."""
     try:
-        # Simplified search logic - in a real world, this would use a search API or specific store scrapers
-        # For now, we'll return a generic placeholder or try a simple search if store is known
-        query = f"{product_name} {store if store else ''}".strip()
-        
-        # We could use a public image API or just construct a search URL
-        # For the UI to show it, we need a direct image link.
-        # Let's try to search on a generic site or just provide a placeholder that the frontend can use.
-        
         if store and store.lower() == "tesco":
-            # Example: Tesco specific search link (requires more complex scraping to get real image)
             return f"https://nakup.itesco.cz/groceries/cs-CZ/search?query={product_name}"
-            
         return f"https://www.google.com/search?q={product_name}&tbm=isch"
     except:
         return ""
