@@ -4,15 +4,18 @@ import {
     css,
 } from "https://unpkg.com/lit-element@2.4.0/lit-element.js?module";
 
+// Load html5-qrcode library dynamically
+const script = document.createElement('script');
+script.src = "https://unpkg.com/html5-qrcode";
+document.head.appendChild(script);
+
 class ShoppingListPanel extends LitElement {
     static get properties() {
         return {
             hass: { type: Object },
-            narrow: { type: Boolean },
-            route: { type: Object },
-            panel: { type: Object },
             data: { type: Object },
             activeTab: { type: String },
+            showScanner: { type: Boolean },
         };
     }
 
@@ -20,6 +23,8 @@ class ShoppingListPanel extends LitElement {
         super();
         this.data = { inventory: {}, pending_receipts: {}, recipes: {} };
         this.activeTab = 'inventory';
+        this.showScanner = false;
+        this.html5QrCode = null;
     }
 
     connectedCallback() {
@@ -129,18 +134,6 @@ class ShoppingListPanel extends LitElement {
                 font-size: 0.7rem;
                 font-weight: bold;
             }
-            .receipt-card {
-                border-left: 4px solid var(--accent-color);
-            }
-            .item-row {
-                display: flex;
-                justify-content: space-between;
-                padding: 8px 0;
-                border-bottom: 1px solid var(--divider-color);
-            }
-            .item-name { font-weight: 500; }
-            .item-price { color: var(--secondary-text-color); }
-            
             .btn {
                 background: var(--accent-color);
                 color: white;
@@ -156,22 +149,9 @@ class ShoppingListPanel extends LitElement {
                 justify-content: center;
                 gap: 8px;
             }
-            .btn-secondary {
-                background: var(--secondary-background-color);
-                color: var(--primary-text-color);
-            }
-            .btn-outline {
-                background: transparent;
-                border: 1px solid var(--accent-color);
-                color: var(--accent-color);
-            }
+            .btn-secondary { background: var(--secondary-background-color); color: var(--primary-text-color); }
+            .btn-outline { background: transparent; border: 1px solid var(--accent-color); color: var(--accent-color); }
             
-            .empty-state {
-                text-align: center;
-                padding: 40px;
-                color: var(--secondary-text-color);
-            }
-
             .toolbar {
                 background: var(--card-background-color);
                 padding: 16px 24px;
@@ -190,61 +170,93 @@ class ShoppingListPanel extends LitElement {
                 background: var(--primary-background-color);
                 color: var(--primary-text-color);
             }
+
+            /* Scanner Modal */
+            .modal {
+                position: fixed;
+                top: 0; left: 0; right: 0; bottom: 0;
+                background: rgba(0,0,0,0.8);
+                display: flex;
+                flex-direction: column;
+                align-items: center;
+                justify-content: center;
+                z-index: 9999;
+                padding: 20px;
+            }
+            #reader {
+                width: 100%;
+                max-width: 500px;
+                background: white;
+                border-radius: 12px;
+                overflow: hidden;
+            }
+            .modal-close {
+                margin-top: 20px;
+                padding: 10px 30px;
+                background: white;
+                color: black;
+                border-radius: 30px;
+                font-weight: bold;
+                cursor: pointer;
+            }
         `;
     }
 
     render() {
-        const pendingCount = Object.keys(this.data.pending_receipts).length;
-        const inventoryItems = Object.values(this.data.inventory);
-        const recipes = Object.values(this.data.recipes || {});
-
         return html`
             <div class="container">
                 <header>
                     <h1><ha-icon icon="mdi:cart-outline"></ha-icon> Nákupník</h1>
+                    <div style="display: flex; gap: 8px">
+                        <button class="btn" style="width: auto; margin: 0" @click=${this._toggleScanner}>
+                            <ha-icon icon="mdi:barcode-scan"></ha-icon> Skenovat EAN
+                        </button>
+                    </div>
                 </header>
 
                 <div class="tabs">
                     <div class="tab ${this.activeTab === 'inventory' ? 'active' : ''}" @click=${() => this.activeTab = 'inventory'}>Sklad</div>
-                    <div class="tab ${this.activeTab === 'receipts' ? 'active' : ''}" @click=${() => this.activeTab = 'receipts'}>Účtenky ${pendingCount > 0 ? `(${pendingCount})` : ''}</div>
+                    <div class="tab ${this.activeTab === 'receipts' ? 'active' : ''}" @click=${() => this.activeTab = 'receipts'}>Účtenky</div>
                     <div class="tab ${this.activeTab === 'recipes' ? 'active' : ''}" @click=${() => this.activeTab = 'recipes'}>Recepty</div>
                 </div>
 
-                ${this.activeTab === 'inventory' ? this._renderInventory(inventoryItems) : ''}
+                ${this.activeTab === 'inventory' ? this._renderInventory() : ''}
                 ${this.activeTab === 'receipts' ? this._renderReceipts() : ''}
-                ${this.activeTab === 'recipes' ? this._renderRecipes(recipes) : ''}
+                ${this.activeTab === 'recipes' ? this._renderRecipes() : ''}
+
+                ${this.showScanner ? html`
+                    <div class="modal">
+                        <div id="reader"></div>
+                        <div class="modal-close" @click=${this._toggleScanner}>Zavřít skener</div>
+                    </div>
+                ` : ''}
             </div>
         `;
     }
 
-    _renderInventory(items) {
+    _renderInventory() {
+        const items = Object.values(this.data.inventory);
         return html`
             <section>
-                ${items.length === 0 ? html`
-                    <div class="empty-state">Sklad je prázdný. Nahrajte účtenky do složky <code>/config/www/uctenky/</code> a klikněte na "Skenovat nové účtenky".</div>
-                ` : html`
-                    <div class="grid">
-                        ${items.map(item => html`
-                            <div class="card">
-                                ${item.image_url ? html`
-                                    <img class="card-img" src="${item.image_url}" alt="${item.name}" onerror="this.style.display='none'">
-                                ` : ''}
-                                ${item.store ? html`<div class="store-badge">${item.store}</div>` : ''}
-                                <div class="card-content">
-                                    <h3 style="margin: 0">${item.name}</h3>
-                                    <div style="font-size: 1.5rem; font-weight: bold; margin: 8px 0">
-                                        ${item.quantity} <span style="font-size: 0.9rem; font-weight: normal">${item.unit}</span>
-                                    </div>
-                                    <div class="item-price">Poslední cena: ${item.last_price} Kč</div>
-                                    <div style="display: flex; gap: 8px; margin-top: auto">
-                                        <button class="btn btn-secondary" @click=${() => this._updateQty(item.name, -1)}>-1</button>
-                                        <button class="btn btn-secondary" @click=${() => this._updateQty(item.name, 1)}>+1</button>
-                                    </div>
+                <div class="toolbar">
+                    <input id="ean-input" type="text" placeholder="Zadejte EAN kód ručně...">
+                    <button class="btn" style="width: auto; margin: 0" @click=${this._addByEan}>Přidat podle EAN</button>
+                </div>
+                <div class="grid">
+                    ${items.map(item => html`
+                        <div class="card">
+                            ${item.image_url ? html`<img class="card-img" src="${item.image_url}">` : ''}
+                            <div class="card-content">
+                                <h3 style="margin: 0">${item.name}</h3>
+                                <div style="font-size: 1.5rem; font-weight: bold; margin: 8px 0">${item.quantity} ${item.unit}</div>
+                                <div style="display: flex; gap: 8px; margin-top: auto">
+                                    <button class="btn btn-secondary" @click=${() => this._updateQty(item.name, -1)}>-1</button>
+                                    <button class="btn btn-secondary" @click=${() => this._updateQty(item.name, 1)}>+1</button>
                                 </div>
                             </div>
-                        `)}
-                    </div>
-                `}
+                        </div>
+                    `)}
+                </div>
             </section>
         `;
     }
@@ -254,127 +266,99 @@ class ShoppingListPanel extends LitElement {
         return html`
             <section>
                 <div class="toolbar">
-                    <div style="flex: 1">
-                        <strong>Krok 1:</strong> Nahrajte fotky účtenek do <code>/config/www/uctenky/</code>
-                    </div>
-                    <button class="btn" style="width: auto; margin: 0" @click=${this._scanFolder}>
-                        <ha-icon icon="mdi:magnify-scan"></ha-icon> Skenovat nové účtenky
-                    </button>
+                    <div style="flex: 1">Nahráno v <code>/config/www/uctenky/</code></div>
+                    <button class="btn" style="width: auto; margin: 0" @click=${this._scanFolder}>Skenovat složku</button>
                 </div>
-
-                ${receipts.length === 0 ? html`
-                    <div class="empty-state">Žádné nové účtenky k potvrzení.</div>
-                ` : html`
-                    <div class="grid">
-                        ${receipts.map(receipt => html`
-                            <div class="card receipt-card">
-                                ${receipt.store ? html`<div class="store-badge">${receipt.store}</div>` : ''}
-                                <div class="card-content">
-                                    <div style="font-size: 0.8rem; color: var(--secondary-text-color)">
-                                        ${new Date(receipt.date).toLocaleString()}
-                                    </div>
-                                    <div style="margin: 12px 0">
-                                        ${receipt.items.map(item => html`
-                                            <div class="item-row">
-                                                <div style="display: flex; align-items: center; gap: 8px">
-                                                    ${item.image_url ? html`<img src="${item.image_url}" style="width: 24px; height: 24px; border-radius: 4px">` : ''}
-                                                    <span class="item-name">${item.name}</span>
-                                                </div>
-                                                <span class="item-price">${item.price} Kč</span>
-                                            </div>
-                                        `)}
-                                    </div>
-                                    <button class="btn" @click=${() => this._confirmReceipt(receipt.id)}>
-                                        Potvrdit a přidat do skladu
-                                    </button>
+                <div class="grid">
+                    ${receipts.map(receipt => html`
+                        <div class="card">
+                            <div class="card-content">
+                                <div>${new Date(receipt.date).toLocaleString()}</div>
+                                <div style="margin: 10px 0">
+                                    ${receipt.items.map(i => html`<div>${i.name} - ${i.price} Kč</div>`)}
                                 </div>
+                                <button class="btn" @click=${() => this._confirmReceipt(receipt.id)}>Potvrdit</button>
                             </div>
-                        `)}
-                    </div>
-                `}
+                        </div>
+                    `)}
+                </div>
             </section>
         `;
     }
 
-    _renderRecipes(recipes) {
+    _renderRecipes() {
+        const recipes = Object.values(this.data.recipes);
         return html`
             <section>
                 <div class="toolbar">
-                    <input id="recipe-url" type="text" placeholder="Vložte odkaz na recept (např. z Toprecepty.cz)">
-                    <button class="btn" style="width: auto; margin: 0" @click=${this._addRecipe}>
-                        <ha-icon icon="mdi:plus"></ha-icon> Přidat recept
-                    </button>
+                    <input id="recipe-url" type="text" placeholder="URL receptu...">
+                    <button class="btn" style="width: auto; margin: 0" @click=${this._addRecipe}>Přidat recept</button>
                 </div>
-
-                ${recipes.length === 0 ? html`
-                    <div class="empty-state">Zatím nemáte žádné uložené recepty.</div>
-                ` : html`
-                    <div class="grid">
-                        ${recipes.map(recipe => html`
-                            <div class="card">
-                                ${recipe.image_url ? html`
-                                    <img class="card-img" src="${recipe.image_url}" alt="${recipe.title}" onerror="this.style.display='none'">
-                                ` : ''}
-                                <div class="card-content">
-                                    <h3 style="margin: 0">${recipe.title}</h3>
-                                    <div style="font-size: 0.8rem; color: var(--secondary-text-color); margin-bottom: 12px">
-                                        Přidáno: ${new Date(recipe.added_at).toLocaleDateString()}
-                                    </div>
-                                    <div style="margin-bottom: 12px; flex: 1; font-size: 0.9rem">
-                                        <strong>Ingredience:</strong> ${recipe.ingredients.length} položek
-                                    </div>
-                                    <div style="display: flex; flex-direction: column; gap: 8px">
-                                        <a href="${recipe.pdf_url}" target="_blank" class="btn btn-outline" style="text-decoration: none">
-                                            <ha-icon icon="mdi:file-pdf-box"></ha-icon> Otevřít PDF
-                                        </a>
-                                        <button class="btn" @click=${() => this._addIngredientsToShoppingList(recipe)}>
-                                            <ha-icon icon="mdi:playlist-plus"></ha-icon> Přidat do nákupu
-                                        </button>
-                                    </div>
-                                </div>
+                <div class="grid">
+                    ${recipes.map(r => html`
+                        <div class="card">
+                            ${r.image_url ? html`<img class="card-img" src="${r.image_url}">` : ''}
+                            <div class="card-content">
+                                <h3>${r.title}</h3>
+                                <a href="${r.pdf_url}" target="_blank" class="btn btn-outline">Otevřít PDF</a>
+                                <button class="btn" @click=${() => this._addIngredientsToShoppingList(r)}>Do nákupu</button>
                             </div>
-                        `)}
-                    </div>
-                `}
+                        </div>
+                    `)}
+                </div>
             </section>
         `;
     }
 
-    _confirmReceipt(id) {
-        this.hass.callService("shopping_list_ocr", "confirm_receipt", { receipt_id: id });
+    _toggleScanner() {
+        this.showScanner = !this.showScanner;
+        if (this.showScanner) {
+            setTimeout(() => this._startScanner(), 500);
+        } else if (this.html5QrCode) {
+            this.html5QrCode.stop();
+        }
     }
 
-    _scanFolder() {
-        this.hass.callService("shopping_list_ocr", "scan_folder", { folder_path: "/config/www/uctenky/" });
-        this.hass.bus.async_fire("hass-notification", { message: "Skenování složky spuštěno..." });
+    _startScanner() {
+        this.html5QrCode = new Html5Qrcode("reader");
+        const config = { fps: 10, qrbox: { width: 250, height: 150 } };
+        this.html5QrCode.start(
+            { facingMode: "environment" }, 
+            config, 
+            (decodedText) => {
+                this._toggleScanner();
+                this._addByEanValue(decodedText);
+            }
+        );
     }
 
+    _addByEan() {
+        const input = this.shadowRoot.getElementById('ean-input');
+        this._addByEanValue(input.value.trim());
+        input.value = "";
+    }
+
+    _addByEanValue(ean) {
+        if (!ean) return;
+        this.hass.callService("shopping_list_ocr", "add_item_by_ean", { ean: ean });
+        this.hass.bus.async_fire("hass-notification", { message: `Hledám produkt s EAN: ${ean}...` });
+    }
+
+    _confirmReceipt(id) { this.hass.callService("shopping_list_ocr", "confirm_receipt", { receipt_id: id }); }
+    _scanFolder() { this.hass.callService("shopping_list_ocr", "scan_folder", {}); }
     _updateQty(name, delta) {
         const item = this.data.inventory[name];
         this.hass.callService("shopping_list_ocr", "update_inventory", {
-            name: name,
-            quantity: Math.max(0, item.quantity + delta),
-            last_price: item.last_price,
-            unit: item.unit,
-            image_url: item.image_url,
-            store: item.store
+            name: name, quantity: Math.max(0, item.quantity + delta), last_price: item.last_price, unit: item.unit, image_url: item.image_url
         });
     }
-
     _addRecipe() {
         const input = this.shadowRoot.getElementById('recipe-url');
-        const url = input.value.trim();
-        if (!url) return;
-        this.hass.callService("shopping_list_ocr", "add_recipe", { url: url });
+        this.hass.callService("shopping_list_ocr", "add_recipe", { url: input.value.trim() });
         input.value = "";
-        this.hass.bus.async_fire("hass-notification", { message: "Stahuji recept a generuji PDF..." });
     }
-
     _addIngredientsToShoppingList(recipe) {
-        recipe.ingredients.forEach(ing => {
-            this.hass.callService("shopping_list", "add_item", { name: ing });
-        });
-        this.hass.bus.async_fire("hass-notification", { message: `Ingredience k receptu '${recipe.title}' přidány do seznamu.` });
+        recipe.ingredients.forEach(ing => this.hass.callService("shopping_list", "add_item", { name: ing }));
     }
 }
 
