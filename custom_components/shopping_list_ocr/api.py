@@ -123,7 +123,8 @@ async def fetch_recipe_content(hass: HomeAssistant, url: str) -> dict | None:
             "ingredients": [],
             "instructions": "",
             "url": final_url,
-            "source": ""
+            "source": "",
+            "image_url": ""
         }
 
         # 1. Title
@@ -132,6 +133,17 @@ async def fetch_recipe_content(hass: HomeAssistant, url: str) -> dict | None:
             recipe["title"] = title_tag.get_text().strip()
         else:
             recipe["title"] = soup.title.string.split('|')[0].strip() if soup.title else "Recept"
+
+        # 1b. Image (og:image)
+        og_image = soup.find('meta', property='og:image')
+        if og_image:
+            recipe["image_url"] = og_image.get('content')
+        else:
+            # Fallback to first large image
+            for img in soup.find_all('img'):
+                if img.get('src') and ('recipe' in img.get('src') or 'recept' in img.get('src')):
+                    recipe["image_url"] = img.get('src')
+                    break
 
         # 2. Specific scrapers
         if "toprecepty.cz" in final_url:
@@ -202,3 +214,22 @@ async def fetch_recipe_content(hass: HomeAssistant, url: str) -> dict | None:
     except Exception as e:
         _LOGGER.error("Error parsing recipe from %s: %s", url, e)
         return None
+
+async def find_product_image(hass: HomeAssistant, product_name: str, store: str = None) -> str:
+    """Try to find an image for a product, optionally scoped by store."""
+    try:
+        # Simplified search logic - in a real world, this would use a search API or specific store scrapers
+        # For now, we'll return a generic placeholder or try a simple search if store is known
+        query = f"{product_name} {store if store else ''}".strip()
+        
+        # We could use a public image API or just construct a search URL
+        # For the UI to show it, we need a direct image link.
+        # Let's try to search on a generic site or just provide a placeholder that the frontend can use.
+        
+        if store and store.lower() == "tesco":
+            # Example: Tesco specific search link (requires more complex scraping to get real image)
+            return f"https://nakup.itesco.cz/groceries/cs-CZ/search?query={product_name}"
+            
+        return f"https://www.google.com/search?q={product_name}&tbm=isch"
+    except:
+        return ""

@@ -90,14 +90,14 @@ class ShoppingListPanel extends LitElement {
             }
             .grid {
                 display: grid;
-                grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+                grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
                 gap: 24px;
             }
             .card {
                 background: var(--card-background-color, #fff);
                 border-radius: 12px;
                 box-shadow: 0 4px 20px rgba(0,0,0,0.1);
-                padding: 20px;
+                overflow: hidden;
                 transition: transform 0.2s;
                 position: relative;
                 display: flex;
@@ -105,6 +105,29 @@ class ShoppingListPanel extends LitElement {
             }
             .card:hover {
                 transform: translateY(-4px);
+            }
+            .card-content {
+                padding: 16px;
+                display: flex;
+                flex-direction: column;
+                flex: 1;
+            }
+            .card-img {
+                width: 100%;
+                height: 160px;
+                object-fit: cover;
+                background: var(--secondary-background-color);
+            }
+            .store-badge {
+                position: absolute;
+                top: 12px;
+                right: 12px;
+                background: rgba(0,0,0,0.6);
+                color: white;
+                padding: 4px 8px;
+                border-radius: 4px;
+                font-size: 0.7rem;
+                font-weight: bold;
             }
             .receipt-card {
                 border-left: 4px solid var(--accent-color);
@@ -201,14 +224,20 @@ class ShoppingListPanel extends LitElement {
                     <div class="grid">
                         ${items.map(item => html`
                             <div class="card">
-                                <h3 style="margin-top: 0">${item.name}</h3>
-                                <div style="font-size: 1.5rem; font-weight: bold; margin: 8px 0">
-                                    ${item.quantity} <span style="font-size: 0.9rem; font-weight: normal">${item.unit}</span>
-                                </div>
-                                <div class="item-price">Poslední cena: ${item.last_price} Kč</div>
-                                <div style="display: flex; gap: 8px; margin-top: auto">
-                                    <button class="btn btn-secondary" @click=${() => this._updateQty(item.name, -1)}>-1</button>
-                                    <button class="btn btn-secondary" @click=${() => this._updateQty(item.name, 1)}>+1</button>
+                                ${item.image_url ? html`
+                                    <img class="card-img" src="${item.image_url}" alt="${item.name}" onerror="this.style.display='none'">
+                                ` : ''}
+                                ${item.store ? html`<div class="store-badge">${item.store}</div>` : ''}
+                                <div class="card-content">
+                                    <h3 style="margin: 0">${item.name}</h3>
+                                    <div style="font-size: 1.5rem; font-weight: bold; margin: 8px 0">
+                                        ${item.quantity} <span style="font-size: 0.9rem; font-weight: normal">${item.unit}</span>
+                                    </div>
+                                    <div class="item-price">Poslední cena: ${item.last_price} Kč</div>
+                                    <div style="display: flex; gap: 8px; margin-top: auto">
+                                        <button class="btn btn-secondary" @click=${() => this._updateQty(item.name, -1)}>-1</button>
+                                        <button class="btn btn-secondary" @click=${() => this._updateQty(item.name, 1)}>+1</button>
+                                    </div>
                                 </div>
                             </div>
                         `)}
@@ -228,20 +257,26 @@ class ShoppingListPanel extends LitElement {
                     <div class="grid">
                         ${receipts.map(receipt => html`
                             <div class="card receipt-card">
-                                <div style="font-size: 0.8rem; color: var(--secondary-text-color)">
-                                    ${new Date(receipt.date).toLocaleString()}
+                                ${receipt.store ? html`<div class="store-badge">${receipt.store}</div>` : ''}
+                                <div class="card-content">
+                                    <div style="font-size: 0.8rem; color: var(--secondary-text-color)">
+                                        ${new Date(receipt.date).toLocaleString()}
+                                    </div>
+                                    <div style="margin: 12px 0">
+                                        ${receipt.items.map(item => html`
+                                            <div class="item-row">
+                                                <div style="display: flex; align-items: center; gap: 8px">
+                                                    ${item.image_url ? html`<img src="${item.image_url}" style="width: 24px; height: 24px; border-radius: 4px">` : ''}
+                                                    <span class="item-name">${item.name}</span>
+                                                </div>
+                                                <span class="item-price">${item.price} Kč</span>
+                                            </div>
+                                        `)}
+                                    </div>
+                                    <button class="btn" @click=${() => this._confirmReceipt(receipt.id)}>
+                                        Potvrdit a přidat do skladu
+                                    </button>
                                 </div>
-                                <div style="margin: 12px 0">
-                                    ${receipt.items.map(item => html`
-                                        <div class="item-row">
-                                            <span class="item-name">${item.name}</span>
-                                            <span class="item-price">${item.price} Kč</span>
-                                        </div>
-                                    `)}
-                                </div>
-                                <button class="btn" @click=${() => this._confirmReceipt(receipt.id)}>
-                                    Potvrdit a přidat do skladu
-                                </button>
                             </div>
                         `)}
                     </div>
@@ -264,20 +299,25 @@ class ShoppingListPanel extends LitElement {
                     <div class="grid">
                         ${recipes.map(recipe => html`
                             <div class="card">
-                                <h3 style="margin-top: 0">${recipe.title}</h3>
-                                <div style="font-size: 0.8rem; color: var(--secondary-text-color); margin-bottom: 12px">
-                                    Přidáno: ${new Date(recipe.added_at).toLocaleDateString()}
-                                </div>
-                                <div style="margin-bottom: 12px; flex: 1; font-size: 0.9rem">
-                                    <strong>Ingredience:</strong> ${recipe.ingredients.length} položek
-                                </div>
-                                <div style="display: flex; flex-direction: column; gap: 8px">
-                                    <a href="${recipe.pdf_url}" target="_blank" class="btn btn-outline" style="text-decoration: none">
-                                        <ha-icon icon="mdi:file-pdf-box"></ha-icon> Otevřít PDF
-                                    </a>
-                                    <button class="btn" @click=${() => this._addIngredientsToShoppingList(recipe)}>
-                                        <ha-icon icon="mdi:playlist-plus"></ha-icon> Přidat do nákupu
-                                    </button>
+                                ${recipe.image_url ? html`
+                                    <img class="card-img" src="${recipe.image_url}" alt="${recipe.title}" onerror="this.style.display='none'">
+                                ` : ''}
+                                <div class="card-content">
+                                    <h3 style="margin: 0">${recipe.title}</h3>
+                                    <div style="font-size: 0.8rem; color: var(--secondary-text-color); margin-bottom: 12px">
+                                        Přidáno: ${new Date(recipe.added_at).toLocaleDateString()}
+                                    </div>
+                                    <div style="margin-bottom: 12px; flex: 1; font-size: 0.9rem">
+                                        <strong>Ingredience:</strong> ${recipe.ingredients.length} položek
+                                    </div>
+                                    <div style="display: flex; flex-direction: column; gap: 8px">
+                                        <a href="${recipe.pdf_url}" target="_blank" class="btn btn-outline" style="text-decoration: none">
+                                            <ha-icon icon="mdi:file-pdf-box"></ha-icon> Otevřít PDF
+                                        </a>
+                                        <button class="btn" @click=${() => this._addIngredientsToShoppingList(recipe)}>
+                                            <ha-icon icon="mdi:playlist-plus"></ha-icon> Přidat do nákupu
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                         `)}
@@ -297,7 +337,9 @@ class ShoppingListPanel extends LitElement {
             name: name,
             quantity: Math.max(0, item.quantity + delta),
             last_price: item.last_price,
-            unit: item.unit
+            unit: item.unit,
+            image_url: item.image_url,
+            store: item.store
         });
     }
 
@@ -311,7 +353,6 @@ class ShoppingListPanel extends LitElement {
     }
 
     _addIngredientsToShoppingList(recipe) {
-        // V HA nákupním seznamu (pokud existuje)
         recipe.ingredients.forEach(ing => {
             this.hass.callService("shopping_list", "add_item", { name: ing });
         });

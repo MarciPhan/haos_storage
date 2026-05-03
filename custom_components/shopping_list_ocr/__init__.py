@@ -2,13 +2,14 @@ import logging
 import os
 import uuid
 import datetime
+import re
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers.storage import Store
 from homeassistant.components.http import HomeAssistantView
 import homeassistant.util.dt as dt_util
 
 from .const import DOMAIN, STORAGE_KEY, STORAGE_VERSION, EVENT_RECEIPTS_UPDATED
-from .api import process_receipt_image, fetch_recipe_content
+from .api import process_receipt_image, fetch_recipe_content, find_product_image
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -72,16 +73,29 @@ async def async_setup_entry(hass: HomeAssistant, entry):
 
         items = await process_receipt_image(hass, image_path)
         if items:
+            # Detect store
+            all_text = " ".join([i["name"] for i in items]).lower()
+            store = None
+            for s in ["tesco", "albert", "lidl", "kaufland", "billa", "penny"]:
+                if s in all_text:
+                    store = s.capitalize()
+                    break
+
+            # Try to find images for items
+            for item in items:
+                item["image_url"] = await find_product_image(hass, item["name"], store)
+
             receipt_id = str(uuid.uuid4())
             data["pending_receipts"][receipt_id] = {
                 "id": receipt_id,
                 "date": dt_util.now().isoformat(),
                 "items": items,
-                "image_path": image_path
+                "image_path": image_path,
+                "store": store
             }
             await store.async_save(data)
             hass.bus.async_fire(EVENT_RECEIPTS_UPDATED)
-            _LOGGER.info("Successfully scanned receipt with %d items", len(items))
+            _LOGGER.info("Successfully scanned receipt from %s with %d items", store or "unknown store", len(items))
         else:
             _LOGGER.warning("No items found on receipt %s", image_path)
 
@@ -104,12 +118,25 @@ async def async_setup_entry(hass: HomeAssistant, entry):
 
                 items = await process_receipt_image(hass, image_path)
                 if items:
+                    # Detect store
+                    all_text = " ".join([i["name"] for i in items]).lower()
+                    store = None
+                    for s in ["tesco", "albert", "lidl", "kaufland", "billa", "penny"]:
+                        if s in all_text:
+                            store = s.capitalize()
+                            break
+
+                    # Try to find images for items
+                    for item in items:
+                        item["image_url"] = await find_product_image(hass, item["name"], store)
+
                     receipt_id = str(uuid.uuid4())
                     data["pending_receipts"][receipt_id] = {
                         "id": receipt_id,
                         "date": dt_util.now().isoformat(),
                         "items": items,
-                        "image_path": image_path
+                        "image_path": image_path,
+                        "store": store
                     }
                     found_new = True
         
@@ -135,7 +162,9 @@ async def async_setup_entry(hass: HomeAssistant, entry):
                         "last_price": item["price"],
                         "unit": item.get("unit", "ks"),
                         "min_quantity": 0,
-                        "expiry_days": 0
+                        "expiry_days": 0,
+                        "image_url": item.get("image_url", ""),
+                        "store": receipt.get("store")
                     }
             await store.async_save(data)
             hass.bus.async_fire(EVENT_RECEIPTS_UPDATED)
@@ -155,7 +184,9 @@ async def async_setup_entry(hass: HomeAssistant, entry):
                 "last_price": call.data.get("last_price", 0),
                 "unit": call.data.get("unit", "ks"),
                 "min_quantity": call.data.get("min_quantity", 0),
-                "expiry_days": call.data.get("expiry_days", 0)
+                "expiry_days": call.data.get("expiry_days", 0),
+                "image_url": call.data.get("image_url", ""),
+                "store": call.data.get("store", "")
             }
         await store.async_save(data)
         hass.bus.async_fire(EVENT_RECEIPTS_UPDATED)
@@ -197,6 +228,11 @@ async def async_setup_entry(hass: HomeAssistant, entry):
             # Title
             pdf.cell(190, 10, txt=recipe_data["title"], ln=True, align='C')
             pdf.ln(10)
+
+            # Optional Image in PDF
+            # if recipe_data["image_url"]:
+            #    try: pdf.image(recipe_data["image_url"], x=10, y=None, w=100)
+            #    except: pass
             
             # Ingredients header
             pdf.set_font("Helvetica" if not font_loaded else "DejaVu", size=14)
@@ -228,6 +264,7 @@ async def async_setup_entry(hass: HomeAssistant, entry):
             "ingredients": recipe_data["ingredients"],
             "instructions": recipe_data["instructions"],
             "url": recipe_data["url"],
+            "image_url": recipe_data.get("image_url", ""),
             "pdf_url": f"/shopping_list_static/recipes/{pdf_filename}",
             "added_at": dt_util.now().isoformat()
         }
