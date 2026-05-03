@@ -1,0 +1,33 @@
+scan_receipt:
+  description: Naskenuje obrázek účtenky a vytáhne z něj položky.
+  fields:
+    image_path:
+      description: Absolutní cesta k souboru s obrázkem.
+      example: "/config/receipts/učenka_2023.jpg"
+      required: true
+
+confirm_receipt:
+  description: Potvrdí položky z čekající účtenky a přidá je do inventáře.
+  fields:
+    receipt_id:
+      description: ID čekající účtenky.
+      required: true
+
+update_inventory:
+  description: Ruční aktualizace položky v inventáři.
+  fields:
+    name:
+      description: Název položky.
+      required: true
+    quantity:
+      description: Množství.
+      required: false
+    last_price:
+      description: Poslední cena.
+      required: false
+    unit:
+      description: Jednotka (ks, kg, l).
+      required: false
+    action:
+      description: Akce (update nebo delete).
+      required: false
