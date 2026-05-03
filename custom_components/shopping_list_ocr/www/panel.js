@@ -172,13 +172,15 @@ class ShoppingListPanel extends LitElement {
                 color: var(--secondary-text-color);
             }
 
-            .recipe-form {
+            .toolbar {
                 background: var(--card-background-color);
-                padding: 24px;
+                padding: 16px 24px;
                 border-radius: 12px;
                 margin-bottom: 32px;
                 display: flex;
-                gap: 12px;
+                align-items: center;
+                gap: 16px;
+                box-shadow: 0 2px 10px rgba(0,0,0,0.05);
             }
             input {
                 flex: 1;
@@ -219,7 +221,7 @@ class ShoppingListPanel extends LitElement {
         return html`
             <section>
                 ${items.length === 0 ? html`
-                    <div class="empty-state">Sklad je prázdný. Nahrajte účtenku a spusťte skenování.</div>
+                    <div class="empty-state">Sklad je prázdný. Nahrajte účtenky do složky <code>/config/www/uctenky/</code> a klikněte na "Skenovat nové účtenky".</div>
                 ` : html`
                     <div class="grid">
                         ${items.map(item => html`
@@ -251,6 +253,15 @@ class ShoppingListPanel extends LitElement {
         const receipts = Object.values(this.data.pending_receipts);
         return html`
             <section>
+                <div class="toolbar">
+                    <div style="flex: 1">
+                        <strong>Krok 1:</strong> Nahrajte fotky účtenek do <code>/config/www/uctenky/</code>
+                    </div>
+                    <button class="btn" style="width: auto; margin: 0" @click=${this._scanFolder}>
+                        <ha-icon icon="mdi:magnify-scan"></ha-icon> Skenovat nové účtenky
+                    </button>
+                </div>
+
                 ${receipts.length === 0 ? html`
                     <div class="empty-state">Žádné nové účtenky k potvrzení.</div>
                 ` : html`
@@ -288,9 +299,11 @@ class ShoppingListPanel extends LitElement {
     _renderRecipes(recipes) {
         return html`
             <section>
-                <div class="recipe-form">
+                <div class="toolbar">
                     <input id="recipe-url" type="text" placeholder="Vložte odkaz na recept (např. z Toprecepty.cz)">
-                    <button class="btn" style="width: auto; margin: 0" @click=${this._addRecipe}>Přidat recept</button>
+                    <button class="btn" style="width: auto; margin: 0" @click=${this._addRecipe}>
+                        <ha-icon icon="mdi:plus"></ha-icon> Přidat recept
+                    </button>
                 </div>
 
                 ${recipes.length === 0 ? html`
@@ -331,6 +344,11 @@ class ShoppingListPanel extends LitElement {
         this.hass.callService("shopping_list_ocr", "confirm_receipt", { receipt_id: id });
     }
 
+    _scanFolder() {
+        this.hass.callService("shopping_list_ocr", "scan_folder", { folder_path: "/config/www/uctenky/" });
+        this.hass.bus.async_fire("hass-notification", { message: "Skenování složky spuštěno..." });
+    }
+
     _updateQty(name, delta) {
         const item = this.data.inventory[name];
         this.hass.callService("shopping_list_ocr", "update_inventory", {
@@ -345,11 +363,11 @@ class ShoppingListPanel extends LitElement {
 
     _addRecipe() {
         const input = this.shadowRoot.getElementById('recipe-url');
-        const url = input.value.strip ? input.value.strip() : input.value.trim();
+        const url = input.value.trim();
         if (!url) return;
         this.hass.callService("shopping_list_ocr", "add_recipe", { url: url });
         input.value = "";
-        this.hass.bus.async_fire("hass-notification", { message: "Stahuji recept..." });
+        this.hass.bus.async_fire("hass-notification", { message: "Stahuji recept a generuji PDF..." });
     }
 
     _addIngredientsToShoppingList(recipe) {
