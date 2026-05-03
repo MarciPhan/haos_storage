@@ -173,8 +173,8 @@ async def async_setup_entry(hass: HomeAssistant, entry):
     store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
     data = await store.async_load() or {}
     # Ensure all top-level keys exist
-    for key in ("inventory", "pending_receipts", "recipes", "keep_config"):
-        data.setdefault(key, {})
+    for key in ("inventory", "pending_receipts", "recipes", "keep_config", "consumption_log"):
+        data.setdefault(key, {} if key != "consumption_log" else [])
 
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = data
@@ -190,6 +190,23 @@ async def async_setup_entry(hass: HomeAssistant, entry):
     async def _save():
         await store.async_save(data)
         hass.bus.async_fire(EVENT_RECEIPTS_UPDATED)
+
+    def _make_item(name, **kw):
+        """Create a canonical inventory item dict."""
+        return {
+            "name": name,
+            "quantity": kw.get("quantity", 1),
+            "last_price": kw.get("last_price", 0),
+            "unit": kw.get("unit", "ks"),
+            "min_quantity": kw.get("min_quantity", 0),
+            "expiry_date": kw.get("expiry_date", ""),
+            "category": kw.get("category", ""),
+            "location": kw.get("location", ""),
+            "image_url": kw.get("image_url", ""),
+            "store": kw.get("store", ""),
+            "ean": kw.get("ean", ""),
+            "added_at": kw.get("added_at", dt_util.now().isoformat()),
+        }
 
     # -----------------------------------------------------------------------
     #  Services
@@ -265,16 +282,14 @@ async def async_setup_entry(hass: HomeAssistant, entry):
                 data["inventory"][name]["quantity"] += item.get("quantity", 1)
                 data["inventory"][name]["last_price"] = item.get("price", 0)
             else:
-                data["inventory"][name] = {
-                    "name": name,
-                    "quantity": item.get("quantity", 1),
-                    "last_price": item.get("price", 0),
-                    "unit": item.get("unit", "ks"),
-                    "min_quantity": 0,
-                    "expiry_days": 0,
-                    "image_url": item.get("image_url", ""),
-                    "store": receipt.get("store"),
-                }
+                data["inventory"][name] = _make_item(
+                    name,
+                    quantity=item.get("quantity", 1),
+                    last_price=item.get("price", 0),
+                    unit=item.get("unit", "ks"),
+                    image_url=item.get("image_url", ""),
+                    store=receipt.get("store", ""),
+                )
         await _save()
 
     async def handle_update_inventory(call: ServiceCall):
@@ -284,17 +299,36 @@ async def async_setup_entry(hass: HomeAssistant, entry):
             return
         if call.data.get("action") == "delete":
             data["inventory"].pop(name, None)
+        elif call.data.get("action") == "consume":
+            # Log consumption and decrease quantity
+            if name in data["inventory"]:
+                amount = call.data.get("amount", 1)
+                data["inventory"][name]["quantity"] = max(
+                    0, data["inventory"][name]["quantity"] - amount
+                )
+                data["consumption_log"].append({
+                    "name": name,
+                    "amount": amount,
+                    "date": dt_util.now().isoformat(),
+                })
+                # Keep log trimmed to last 200 entries
+                data["consumption_log"] = data["consumption_log"][-200:]
         else:
-            data["inventory"][name] = {
-                "name": name,
-                "quantity": call.data.get("quantity", 0),
-                "last_price": call.data.get("last_price", 0),
-                "unit": call.data.get("unit", "ks"),
-                "min_quantity": call.data.get("min_quantity", 0),
-                "expiry_days": call.data.get("expiry_days", 0),
-                "image_url": call.data.get("image_url", ""),
-                "store": call.data.get("store", ""),
-            }
+            existing = data["inventory"].get(name, {})
+            data["inventory"][name] = _make_item(
+                name,
+                quantity=call.data.get("quantity", existing.get("quantity", 0)),
+                last_price=call.data.get("last_price", existing.get("last_price", 0)),
+                unit=call.data.get("unit", existing.get("unit", "ks")),
+                min_quantity=call.data.get("min_quantity", existing.get("min_quantity", 0)),
+                expiry_date=call.data.get("expiry_date", existing.get("expiry_date", "")),
+                category=call.data.get("category", existing.get("category", "")),
+                location=call.data.get("location", existing.get("location", "")),
+                image_url=call.data.get("image_url", existing.get("image_url", "")),
+                store=call.data.get("store", existing.get("store", "")),
+                ean=call.data.get("ean", existing.get("ean", "")),
+                added_at=existing.get("added_at", dt_util.now().isoformat()),
+            )
         await _save()
 
     async def handle_add_item_by_ean(call: ServiceCall):
@@ -311,17 +345,12 @@ async def async_setup_entry(hass: HomeAssistant, entry):
         if name in data["inventory"]:
             data["inventory"][name]["quantity"] += qty
         else:
-            data["inventory"][name] = {
-                "name": name,
-                "quantity": qty,
-                "last_price": 0,
-                "unit": "ks",
-                "min_quantity": 0,
-                "expiry_days": 0,
-                "image_url": product.get("image_url") or "",
-                "ean": ean,
-                "store": "",
-            }
+            data["inventory"][name] = _make_item(
+                name,
+                quantity=qty,
+                image_url=product.get("image_url", ""),
+                ean=ean,
+            )
         await _save()
         _LOGGER.info("Added by EAN %s: %s", ean, name)
 
