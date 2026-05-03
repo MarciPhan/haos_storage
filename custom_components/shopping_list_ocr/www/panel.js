@@ -6,7 +6,7 @@ const LOCS=["","Lednice","Mrazák","Spíž","Skříňka","Koupelna"];
 
 class ShoppingListPanel extends LitElement{
 static get properties(){return{hass:{type:Object},data:{type:Object},tab:{type:String},scan:{type:Boolean},search:{type:String},filterCat:{type:String},filterLoc:{type:String},editing:{type:String},toast:{type:String}};}
-constructor(){super();this.data={inventory:{},pending_receipts:{},recipes:{},keep_config:{},consumption_log:[]};this.tab="dashboard";this.scan=false;this.search="";this.filterCat="";this.filterLoc="";this.editing="";this.toast="";this._sc=null;}
+constructor(){super();this.data={inventory:{},pending_receipts:{},recipes:{},consumption_log:[]};this.tab="dashboard";this.scan=false;this.search="";this.filterCat="";this.filterLoc="";this.editing="";this.toast="";this._sc=null;}
 connectedCallback(){super.connectedCallback();this._fetch();this.hass?.connection?.subscribeEvents(()=>this._fetch(),"shopping_list_ocr_updated");}
 async _fetch(){if(!this.hass)return;try{const r=await this.hass.fetchWithAuth("/api/shopping_list/data");if(r.ok)this.data=await r.json();}catch(e){}}
 _t(m){this.toast=m;setTimeout(()=>{this.toast=""},3500);}
@@ -57,8 +57,6 @@ static get styles(){return css`
 .stat{background:var(--card-background-color,var(--card));border-radius:12px;padding:20px;border:1px solid var(--border);text-align:center}
 .stat-val{font-size:2rem;font-weight:800;margin:4px 0}
 .stat-lbl{font-size:.8rem;color:var(--dim)}
-.cfg{max-width:460px;margin:0 auto;background:var(--card-background-color,var(--card));padding:28px;border-radius:12px;border:1px solid var(--border);display:flex;flex-direction:column;gap:14px}
-.cfg input{padding:10px 12px;border-radius:8px;border:1px solid var(--border);background:rgba(255,255,255,.04);color:inherit;font-size:.85rem;width:100%;box-sizing:border-box}
 .edit-row{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
 .edit-row select,.edit-row input{padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:rgba(255,255,255,.04);color:inherit;font-size:.8rem;flex:1;min-width:80px}
 `;}
@@ -74,13 +72,11 @@ return html`<div class="p">
 <div class="tb ${this.tab==='inventory'?'on':''}" @click=${()=>this.tab='inventory'}>Sklad (${inv.length})</div>
 <div class="tb ${this.tab==='receipts'?'on':''}" @click=${()=>this.tab='receipts'}>Účtenky${pc?html`<span class="bdg">${pc}</span>`:''}</div>
 <div class="tb ${this.tab==='recipes'?'on':''}" @click=${()=>this.tab='recipes'}>Recepty</div>
-<div class="tb ${this.tab==='sync'?'on':''}" @click=${()=>this.tab='sync'}>Keep</div>
 </div>
 ${this.tab==='dashboard'?this._dash(inv):''}
 ${this.tab==='inventory'?this._inv(inv):''}
 ${this.tab==='receipts'?this._rec():''}
 ${this.tab==='recipes'?this._rcp():''}
-${this.tab==='sync'?this._sync():''}
 ${this.scan?html`<div class="modal"><div id="reader"></div><button class="btn bo" style="margin-top:16px" @click=${this._toggleScan}>Zavřít</button></div>`:''}
 ${this.toast?html`<div class="toast">${this.toast}</div>`:''}
 </div>`;}
@@ -195,16 +191,6 @@ ${rr.length===0?html`<div class="empty"><p><strong>Žádné recepty</strong></p>
 </div></div>`)}</div>`}
 </section>`;}
 
-_sync(){const c=this.data.keep_config||{};
-return html`<section><div class="cfg">
-<h2 style="margin:0;font-size:1.3rem"><ha-icon icon="mdi:google"></ha-icon> Google Keep</h2>
-<p class="cm" style="margin:0">Synchronizace nákupního seznamu. Potřebujete <a href="https://myaccount.google.com/apppasswords" target="_blank" style="color:var(--a)">Heslo aplikace</a>.</p>
-<input id="ku" type="text" placeholder="Google E-mail" .value="${c.username||''}">
-<input id="kp" type="password" placeholder="App Password" .value="${c.password||''}">
-<input id="kt" type="text" placeholder="Název poznámky" .value="${c.title||'Nákup'}">
-<button class="btn bp bw" @click=${this._keepSync}><ha-icon icon="mdi:sync"></ha-icon> Synchronizovat</button>
-</div></section>`;}
-
 // --- Actions ---
 async _upload(e){const f=e.target.files?.[0];if(!f)return;const fd=new FormData();fd.append("file",f);this._t("Nahrávám…");
 try{const r=await this.hass.fetchWithAuth("/api/shopping_list/upload",{method:"POST",body:fd});if(r.ok){this._t("Zpracovávám…");setTimeout(()=>this._fetch(),3000);}else this._t("Chyba");}catch(e){this._t("Chyba");}e.target.value="";}
@@ -219,6 +205,5 @@ _saveEdit(item){const cat=this.shadowRoot.getElementById("ecat")?.value||"";cons
 this._svc("update_inventory",{name:item.name,quantity:item.quantity,last_price:item.last_price||0,unit:item.unit||"ks",image_url:item.image_url||"",store:item.store||"",category:cat,location:loc,expiry_date:exp,min_quantity:min});
 item.category=cat;item.location=loc;item.expiry_date=exp;item.min_quantity=min;this.editing="";this.requestUpdate();this._t("Uloženo");}
 _addRcp(){const i=this.shadowRoot.getElementById("rurl");if(!i)return;const u=i.value.trim();if(!u)return;this._svc("add_recipe",{url:u});i.value="";this._t("Stahuji recept…");setTimeout(()=>this._fetch(),5000);}
-_keepSync(){const u=this.shadowRoot.getElementById("ku")?.value||"";const p=this.shadowRoot.getElementById("kp")?.value||"";const t=this.shadowRoot.getElementById("kt")?.value||"Nákup";if(!u||!p){this._t("Vyplňte údaje");return;}this._svc("sync_to_keep",{username:u,password:p,title:t});this._t("Synchronizuji…");}
 }
 customElements.define("shopping-list-panel",ShoppingListPanel);
