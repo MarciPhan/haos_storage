@@ -45,9 +45,18 @@ update_inventory:
       name: Jednotka
       description: Jednotka (ks, kg, l).
       required: false
+    category:
+      name: Kategorie
+    location:
+      name: Umístění
+    expiry_date:
+      name: Expirace
+      example: "2024-12-31"
+    min_quantity:
+      name: Minimální množství
     action:
       name: Akce
-      description: "update" nebo "delete".
+      description: "update", "delete" nebo "consume".
       required: false
 
 add_item_by_ean:
@@ -73,20 +82,3 @@ add_recipe:
       description: Odkaz na recept (toprecepty.cz, recepty.cz, vareni.cz…).
       example: "https://www.toprecepty.cz/recept/12345"
       required: true
-
-sync_to_keep:
-  name: Synchronizovat do Google Keep
-  description: Odešle nákupní seznam z HA do Google Keep jako kontrolní seznam.
-  fields:
-    username:
-      name: Google E-mail
-      required: true
-    password:
-      name: App Password
-      description: Heslo aplikace z nastavení Google účtu.
-      required: true
-    title:
-      name: Název poznámky
-      description: Název poznámky v Google Keep.
-      example: "Nákup"
-      required: false

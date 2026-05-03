@@ -425,62 +425,8 @@ async def async_setup_entry(hass: HomeAssistant, entry):
         await _save()
         _LOGGER.info("Added recipe: %s", recipe_data["title"])
 
-    async def handle_sync_to_keep(call: ServiceCall):
-        """Synchronise the HA shopping list to a Google Keep checklist."""
-        import gkeepapi
-
-        username = call.data.get("username") or data["keep_config"].get("username", "")
-        password = call.data.get("password") or data["keep_config"].get("password", "")
-        note_title = call.data.get("title") or data["keep_config"].get("title", "Nákup")
-
-        if not username or not password:
-            _LOGGER.error("Google Keep credentials not provided")
-            return
-
-        # Persist credentials for future use
-        if call.data.get("username"):
-            data["keep_config"] = {
-                "username": username,
-                "password": password,
-                "title": note_title,
-            }
-            await store.async_save(data)
-
-        def _sync():
-            keep = gkeepapi.Keep()
-            keep.login(username, password)
-
-            # Find existing note or create new
-            note = None
-            for n in keep.find(archived=False, trashed=False):
-                if n.title == note_title:
-                    note = n
-                    break
-            if note is None:
-                note = keep.createList(note_title)
-
-            # Get items from HA shopping list
-            sl = hass.data.get("shopping_list")
-            items = []
-            if sl:
-                items = [i["name"] for i in sl.items if not i["complete"]]
-
-            # Clear old items and add new
-            for item in note.items:
-                item.delete()
-            for name in items:
-                note.add(name, False)
-
-            keep.sync()
-            _LOGGER.info("Synced %d items to Google Keep note '%s'", len(items), note_title)
-
-        try:
-            await hass.async_add_executor_job(_sync)
-        except Exception as exc:
-            _LOGGER.error("Google Keep sync failed: %s", exc)
-
     # -----------------------------------------------------------------------
-    #  Register everything
+    #  Services
     # -----------------------------------------------------------------------
 
     svc = hass.services.async_register
@@ -490,7 +436,6 @@ async def async_setup_entry(hass: HomeAssistant, entry):
     svc(DOMAIN, "update_inventory", handle_update_inventory)
     svc(DOMAIN, "add_item_by_ean", handle_add_item_by_ean)
     svc(DOMAIN, "add_recipe", handle_add_recipe)
-    svc(DOMAIN, "sync_to_keep", handle_sync_to_keep)
 
     hass.http.register_view(PanelJsView())
     hass.http.register_view(DataView(data))
