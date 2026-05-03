@@ -95,14 +95,17 @@ async def async_setup_entry(hass: HomeAssistant, entry):
             }
             await store.async_save(data)
             hass.bus.async_fire(EVENT_RECEIPTS_UPDATED)
-            _LOGGER.info("Successfully scanned receipt from %s with %d items", store or "unknown store", len(items))
+            _LOGGER.info("Successfully scanned receipt with %d items", len(items))
         else:
             _LOGGER.warning("No items found on receipt %s", image_path)
 
     async def handle_scan_folder(call: ServiceCall):
         """Service to scan all images in a folder."""
-        folder_path = call.data.get("folder_path")
-        if not folder_path or not os.path.isdir(folder_path):
+        folder_path = call.data.get("folder_path") or "/config/www/uctenky/"
+        if not os.path.isdir(folder_path):
+            # Create folder if it doesn't exist to help the user
+            try: os.makedirs(folder_path, exist_ok=True)
+            except: pass
             _LOGGER.error("Folder path %s does not exist", folder_path)
             return
 
@@ -211,28 +214,32 @@ async def async_setup_entry(hass: HomeAssistant, entry):
             pdf = FPDF()
             pdf.add_page()
             
-            # Try to load a font that supports Czech characters
-            font_path = "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf"
+            # Try multiple common paths for DejaVuSans
+            font_paths = [
+                "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+                "/usr/share/fonts/TTF/DejaVuSans.ttf"
+            ]
+            
             font_loaded = False
-            if os.path.exists(font_path):
-                try:
-                    pdf.add_font("DejaVu", "", font_path)
-                    pdf.set_font("DejaVu", size=16)
-                    font_loaded = True
-                except:
-                    pass
+            for fp in font_paths:
+                if os.path.exists(fp):
+                    try:
+                        pdf.add_font("DejaVu", "", fp)
+                        pdf.set_font("DejaVu", size=16)
+                        font_loaded = True
+                        break
+                    except Exception as e:
+                        _LOGGER.warning("Failed to load font from %s: %s", fp, e)
             
             if not font_loaded:
+                _LOGGER.error("No Unicode font found! Falling back to Helvetica (Czech characters will be broken).")
                 pdf.set_font("Helvetica", style="B", size=16)
             
             # Title
             pdf.cell(190, 10, txt=recipe_data["title"], ln=True, align='C')
             pdf.ln(10)
-
-            # Optional Image in PDF
-            # if recipe_data["image_url"]:
-            #    try: pdf.image(recipe_data["image_url"], x=10, y=None, w=100)
-            #    except: pass
             
             # Ingredients header
             pdf.set_font("Helvetica" if not font_loaded else "DejaVu", size=14)
