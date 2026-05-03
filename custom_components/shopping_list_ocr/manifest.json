@@ -1,20 +1,20 @@
 {
   "domain": "shopping_list_ocr",
   "name": "Nákupník",
-  "documentation": "https://github.com/MarciPhan/shopping_list_ocr",
+  "documentation": "https://github.com/MarciPhan/haos_storage",
   "dependencies": [
     "http",
     "frontend",
     "panel_custom"
   ],
   "requirements": [
-    "easyocr==1.7.1",
-    "opencv-python-headless==4.8.1.78",
+    "easyocr",
+    "opencv-python-headless",
     "fpdf2==2.7.4",
     "beautifulsoup4==4.12.2"
   ],
   "codeowners": ["@MarciPhan"],
   "iot_class": "local_push",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "config_flow": true
 }
