@@ -1,33 +1,92 @@
 scan_receipt:
-  description: Naskenuje obrázek účtenky a vytáhne z něj položky.
+  name: Skenovat účtenku
+  description: Naskenuje obrázek účtenky pomocí OCR a vytáhne z něj položky.
   fields:
     image_path:
-      description: Absolutní cesta k souboru s obrázkem.
-      example: "/config/receipts/učenka_2023.jpg"
+      name: Cesta k obrázku
+      description: Absolutní cesta k souboru s obrázkem účtenky.
+      example: "/config/www/uctenky/uctenka.jpg"
       required: true
 
+scan_folder:
+  name: Skenovat složku
+  description: Projde složku a naskenuje všechny nové obrázky účtenek.
+  fields:
+    folder_path:
+      name: Cesta ke složce
+      description: Cesta ke složce s obrázky (výchozí /config/www/uctenky/).
+      example: "/config/www/uctenky/"
+      required: false
+
 confirm_receipt:
+  name: Potvrdit účtenku
   description: Potvrdí položky z čekající účtenky a přidá je do inventáře.
   fields:
     receipt_id:
-      description: ID čekající účtenky.
+      name: ID účtenky
+      description: UUID čekající účtenky.
       required: true
 
 update_inventory:
-  description: Ruční aktualizace položky v inventáři.
+  name: Aktualizovat sklad
+  description: Ruční aktualizace nebo smazání položky v inventáři.
   fields:
     name:
+      name: Název
       description: Název položky.
       required: true
     quantity:
-      description: Množství.
+      name: Množství
       required: false
     last_price:
-      description: Poslední cena.
+      name: Poslední cena
       required: false
     unit:
+      name: Jednotka
       description: Jednotka (ks, kg, l).
       required: false
     action:
-      description: Akce (update nebo delete).
+      name: Akce
+      description: "update" nebo "delete".
+      required: false
+
+add_item_by_ean:
+  name: Přidat podle EAN
+  description: Vyhledá produkt podle EAN kódu v Open Food Facts a přidá do skladu.
+  fields:
+    ean:
+      name: EAN kód
+      description: Čárový kód produktu (8 nebo 13 číslic).
+      example: "8594003025310"
+      required: true
+    quantity:
+      name: Množství
+      description: Počet kusů k přidání.
+      required: false
+
+add_recipe:
+  name: Přidat recept
+  description: Stáhne recept z URL, uloží data a vygeneruje PDF.
+  fields:
+    url:
+      name: URL receptu
+      description: Odkaz na recept (toprecepty.cz, recepty.cz, vareni.cz…).
+      example: "https://www.toprecepty.cz/recept/12345"
+      required: true
+
+sync_to_keep:
+  name: Synchronizovat do Google Keep
+  description: Odešle nákupní seznam z HA do Google Keep jako kontrolní seznam.
+  fields:
+    username:
+      name: Google E-mail
+      required: true
+    password:
+      name: App Password
+      description: Heslo aplikace z nastavení Google účtu.
+      required: true
+    title:
+      name: Název poznámky
+      description: Název poznámky v Google Keep.
+      example: "Nákup"
       required: false
