@@ -179,6 +179,9 @@ async def async_setup(hass: HomeAssistant, config: dict):
 
 async def async_setup_entry(hass: HomeAssistant, entry):
     """Set up Nákupník from a config entry."""
+    # Register update listener
+    entry.async_on_unload(entry.add_update_listener(async_update_options))
+    
     store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
     data = await store.async_load() or {}
     # Ensure all top-level keys exist
@@ -568,4 +571,21 @@ async def async_setup_entry(hass: HomeAssistant, entry):
     except Exception as exc:
         _LOGGER.error("Failed to register panel: %s", exc)
 
+    return True
+
+
+async def async_update_options(hass: HomeAssistant, entry):
+    """Handle options update."""
+    await hass.config_entries.async_reload(entry.entry_id)
+
+
+async def async_unload_entry(hass: HomeAssistant, entry):
+    """Unload a config entry."""
+    # Remove services
+    for service in ("scan_receipt", "scan_folder", "confirm_receipt", "update_pending_receipt", "update_inventory", "add_item_by_ean", "add_recipe", "update_meal_plan"):
+        hass.services.async_remove(DOMAIN, service)
+    
+    # Remove from hass.data
+    hass.data[DOMAIN].pop(entry.entry_id)
+    
     return True

@@ -1,13 +1,19 @@
+from __future__ import annotations
+
+from typing import Any
+import voluptuous as vol
+
 from homeassistant import config_entries
 from homeassistant.core import callback
-import voluptuous as vol
+from homeassistant.data_entry_flow import FlowResult
+
 from .const import DOMAIN, CONF_GEMINI_KEY, CONF_OCR_SPACE_KEY
 
-class ShoppingListConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
+class ShoppingListOcrFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Shopping List OCR."""
     VERSION = 1
 
-    async def async_step_user(self, user_input=None):
+    async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Handle the initial step."""
         if self._async_current_entries():
             return self.async_abort(reason="single_instance_allowed")
@@ -23,19 +29,20 @@ class ShoppingListConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             })
         )
 
-    @staticmethod
     @callback
-    def async_get_options_flow(config_entry):
+    def async_get_options_flow(self, config_entry: config_entries.ConfigEntry) -> ShoppingListOptionsFlow:
+        """Get the options flow for this handler."""
         return ShoppingListOptionsFlow(config_entry)
 
 
 class ShoppingListOptionsFlow(config_entries.OptionsFlow):
     """Handle options flow for the component."""
 
-    def __init__(self, config_entry):
+    def __init__(self, config_entry: config_entries.ConfigEntry) -> None:
+        """Initialize options flow."""
         self.config_entry = config_entry
 
-    async def async_step_init(self, user_input=None):
+    async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         """Manage the options."""
         if user_input is not None:
             # We must update the data in the entry
