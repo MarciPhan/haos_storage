@@ -1,23 +1,32 @@
-"""API helpers for Nákupník — OCR, recipe parsing, product lookup."""
-
-import logging
 import os
-import re
-import base64
-import json
 import io
+import json
+import base64
+import logging
 import aiohttp
-from bs4 import BeautifulSoup
-from PIL import Image
+import re
+import uuid
+import time
+from datetime import timedelta
+import homeassistant.util.dt as dt_util
 from homeassistant.core import HomeAssistant
 
 _LOGGER = logging.getLogger(__name__)
 
-# Lines on a receipt that should never be treated as products
-_SKIP_WORDS = frozenset([
-    "CELKEM", "SOUČET", "SOUCET", "PLATBA", "KARTOU", "HOTOVOST",
-    "DPH", "BDP", "FIK", "PKP", "EET", "DIČ", "IČ", "IČO",
-    "DIČO", "PRODEJ", "POKLADNA", "DĚKUJEME", "DATUM",
+# Seznam klíčových slov pro detekci kategorií (pokud Gemini selže)
+CATEGORIES = {
+    "Ovoce a zelenina": ["jablko", "banán", "rajče", "okurka", "paprika", "brambor", "cibule", "česnek", "ovoce", "zelenina"],
+    "Mléčné výrobky": ["mléko", "jogurt", "sýr", "tvaroh", "máslo", "smetana", "vejce", "eidam", "gouda", "mozzarella"],
+    "Maso a ryby": ["maso", "kuřecí", "hovězí", "vepřové", "šunka", "salám", "párky", "ryba", "losos", "pstruh"],
+    "Pečivo": ["rohlík", "chléb", "houska", "bageta", "kobliha", "koláč", "veka"],
+    "Nápoje": ["voda", "džus", "pivo", "víno", "limonáda", "cola", "čaj", "káva", "minerálka"],
+    "Drogerie": ["mýdlo", "šampon", "pasta", "kartáček", "toaletní", "papír", "prací", "aviváž"],
+}
+
+# Častá slova na účtenkách, která nejsou produkty
+SKIP_WORDS = set([
+    "SLEVA", "CELKEM", "KČ", "DPH", "ZAOKROUHLENÍ", "VČETNĚ", "HOTOVOST", "KARTOU", "PLATBA",
+    "REKAPITULACE", "TRŽBA", "FIK", "BKP", "DIČO", "PRODEJ", "POKLADNA", "DĚKUJEME", "DATUM",
 ])
 
 # ---------------------------------------------------------------------------
@@ -72,7 +81,7 @@ async def process_receipt_image(hass: HomeAssistant, image_path: str, gemini_key
         return {"items": []}
 
     if gemini_key:
-        _LOGGER.info("Using Gemini 1.5 Flash for OCR")
+        _LOGGER.info("Using Gemini for OCR")
         result = await process_receipt_with_gemini(hass, image_path, gemini_key)
         if result is not None:
             return result
@@ -82,12 +91,11 @@ async def process_receipt_image(hass: HomeAssistant, image_path: str, gemini_key
 
 
 async def process_receipt_with_gemini(hass: HomeAssistant, image_path: str, api_key: str) -> dict | None:
-    """Use Gemini 1.5 Flash to extract full receipt data."""
-    b64, mime = await hass.async_add_executor_job(_prepare_image, image_path, 2048) # Gemini handles up to 2MB easily
-    
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
-    
-    prompt = """Extrahuje data z této účtenky. Vrať čistý JSON objekt s touto přesnou strukturou:
+    """Use Gemini 1.5/2.0 Flash to extract full receipt data."""
+    try:
+        b64, mime = await hass.async_add_executor_job(_prepare_image, image_path, 2048)
+        
+        prompt = """Extrahuje data z této účtenky. Vrať čistý JSON objekt s touto přesnou strukturou:
 {
   "store": "Název obchodu (např. Tesco, Lidl, Albert... pokud chybí, nech prázdné)",
   "date": "Datum nákupu ve formátu YYYY-MM-DDTHH:MM:SS (pokud chybí, nech prázdné)",
@@ -101,226 +109,160 @@ Důležité:
 - U každé položky odhadni běžnou dobu trvanlivosti (expiry_days) ve dnech od nákupu (např. čerstvé pečivo 1, mléko 7, sýr 14, trvanlivé potraviny 180). Pokud nevíš, dej null.
 - Ceny a počty musí být čísla. Ignoruj slevy/vratky a nesmyslné texty."""
 
-    payload = {
-        "contents": [{
-            "parts": [
-                {"text": prompt},
-                {"inline_data": {"mime_type": mime, "data": b64}}
-            ]
-        }]
-    }
+        payload = {
+            "contents": [{
+                "parts": [
+                    {"text": prompt},
+                    {"inline_data": {"mime_type": mime, "data": b64}}
+                ]
+            }]
+        }
 
-    raw_text = ""
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=30)) as resp:
-                if resp.status != 200:
-                    err = await resp.text()
-                    _LOGGER.error("Gemini API error %d: %s", resp.status, err)
-                    return {"items": [], "debug": f"Gemini API Error {resp.status}: {err}"}
-                
-                result = await resp.json()
-                if 'candidates' not in result or not result['candidates']:
-                    return {"items": [], "debug": f"Gemini returned no candidates. Raw: {result}"}
-                
-                content = result['candidates'][0].get('content', {})
-                parts = content.get('parts', [])
-                if not parts:
-                    return {"items": [], "debug": f"Gemini returned no parts. Raw: {result}"}
-                    
-                raw_text = parts[0].get('text', '')
-                
-                # Robust extraction: find the FIRST { and LAST }
-                import re
-                json_str = ""
-                start = raw_text.find('{')
-                end = raw_text.rfind('}')
-                if start != -1 and end != -1 and end > start:
-                    json_str = raw_text[start:end+1]
-                else:
-                    return {"items": [], "debug": "No JSON object found in response", "raw_text": raw_text}
-                
-                try:
-                    data = json.loads(json_str)
-                except Exception as je:
-                    return {"items": [], "debug": f"JSON Parse Error: {je}", "raw_text": raw_text}
-                
-                if not isinstance(data, dict):
-                    return {"items": [], "debug": "Extracted JSON is not a dictionary", "raw_text": raw_text}
-                
-                # Clean and normalize
-                def parse_num(v, is_int=False):
-                    if v is None: return 0 if not is_int else 1
-                    v_str = str(v).replace(',', '.').replace(' ', '').strip()
-                    v_str = re.sub(r'[^\d.-]', '', v_str)
-                    try:
-                        return int(float(v_str)) if is_int else float(v_str)
-                    except:
-                        return 0 if not is_int else 1
+        # Try multiple common model names and API versions
+        configs = [
+            ("v1beta", "gemini-1.5-flash"),
+            ("v1", "gemini-1.5-flash"),
+            ("v1beta", "gemini-1.5-flash-latest"),
+            ("v1beta", "gemini-2.0-flash"),
+        ]
+        
+        last_err = ""
+        for ver, model_id in configs:
+            url = f"https://generativelanguage.googleapis.com/{ver}/models/{model_id}:generateContent?key={api_key}"
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+                        if resp.status == 404:
+                            continue
+                        if resp.status != 200:
+                            last_err = f"API Error {resp.status} for {model_id}: {await resp.text()}"
+                            continue
+                        
+                        result = await resp.json()
+                        if 'candidates' not in result or not result['candidates']:
+                            last_err = f"No candidates for {model_id}"
+                            continue
+                        
+                        content = result['candidates'][0].get('content', {})
+                        parts = content.get('parts', [])
+                        if not parts:
+                            last_err = f"No parts for {model_id}"
+                            continue
+                            
+                        raw_text = parts[0].get('text', '')
+                        
+                        # Robust extraction
+                        start = raw_text.find('{')
+                        end = raw_text.rfind('}')
+                        if start == -1 or end == -1 or end <= start:
+                            last_err = f"No JSON in response for {model_id}. Raw: {raw_text}"
+                            continue
+                        
+                        json_str = raw_text[start:end+1]
+                        data = json.loads(json_str)
+                        
+                        def parse_num(v, is_int=False):
+                            if v is None: return 0 if not is_int else 1
+                            v_str = str(v).replace(',', '.').replace(' ', '').strip()
+                            v_str = re.sub(r'[^\d.-]', '', v_str)
+                            try:
+                                return int(float(v_str)) if is_int else float(v_str)
+                            except: return 0 if not is_int else 1
 
-                cleaned = {
-                    "store": data.get("store", ""),
-                    "date": data.get("date", ""),
-                    "total": parse_num(data.get("total", 0)),
-                    "items": [],
-                    "raw_text": raw_text
-                }
+                        return {
+                            "store": data.get("store", ""),
+                            "date": data.get("date", ""),
+                            "total": parse_num(data.get("total", 0)),
+                            "items": [
+                                {
+                                    "name": str(i.get("name", "Položka")),
+                                    "price": parse_num(i.get("price", 0)),
+                                    "quantity": parse_num(i.get("quantity", 1), is_int=True),
+                                    "expiry_days": i.get("expiry_days")
+                                } for i in data.get("items", []) if isinstance(i, dict)
+                            ],
+                            "raw_text": raw_text
+                        }
+            except Exception as e:
+                last_err = str(e)
+                continue
                 
-                items = data.get("items")
-                if isinstance(items, list):
-                    for i in items:
-                        if not isinstance(i, dict): continue
-                        cleaned["items"].append({
-                            "name": str(i.get("name", "Neznámá položka")),
-                            "price": parse_num(i.get("price", 0)),
-                            "quantity": parse_num(i.get("quantity", 1), is_int=True),
-                            "expiry_days": i.get("expiry_days")
-                        })
-                
-                return cleaned
+        return {"items": [], "debug": f"All Gemini attempts failed.\nLast error: {last_err}"}
+        
     except Exception as exc:
         import traceback
         _LOGGER.error("Gemini OCR request failed: %s", exc)
         return {"items": [], "debug": f"{str(exc)}\n\n{traceback.format_exc()}"}
-    return None
 
 
 async def process_receipt_with_ocr_space(hass: HomeAssistant, image_path: str, api_key: str) -> dict:
     """Send an image to OCR.space and return parsed data fallback."""
-    # ocr.space free tier is limited to 1MB
-    b64, mime = await hass.async_add_executor_job(_prepare_image, image_path, 1024)
-    
-    # Use default key if none provided
-    key = api_key or ""
-    
-    payload = {
-        "apikey": key,
-        "language": "cze",
-        "base64Image": f"data:{mime};base64,{b64}",
-        "isOverlayRequired": False,
-        "detectOrientation": True,
-        "scale": True,
-        "OCREngine": 2,
-    }
-
     try:
+        b64, mime = await hass.async_add_executor_job(_prepare_image, image_path, 1024)
+        key = api_key or "K84310118888957" # Default key if possible, but user should provide one
+        
+        payload = {
+            "apikey": key,
+            "language": "cze",
+            "base64Image": f"data:{mime};base64,{b64}",
+            "isOverlayRequired": False,
+            "detectOrientation": True,
+            "scale": True,
+            "OCREngine": 2,
+        }
+
         async with aiohttp.ClientSession() as session:
-            async with session.post(
-                "https://api.ocr.space/parse/image",
-                data=payload,
-                timeout=aiohttp.ClientTimeout(total=60),
-            ) as resp:
+            async with session.post("https://api.ocr.space/parse/image", data=payload, timeout=aiohttp.ClientTimeout(total=60)) as resp:
                 if resp.status != 200:
-                    _LOGGER.error("OCR.space API HTTP %d", resp.status)
                     return {"items": []}
                 result = await resp.json()
+                
+                text = ""
+                if "ParsedResults" in result and result["ParsedResults"]:
+                    text = result["ParsedResults"][0].get("ParsedText", "")
+                
+                return {
+                    "items": _parse_receipt_text(text),
+                    "raw_text": text
+                }
     except Exception as exc:
         _LOGGER.error("OCR.space request failed: %s", exc)
         return {"items": []}
 
-    if result.get("OCRExitCode") != 1:
-        _LOGGER.error("OCR failed: %s", result.get("ErrorMessage"))
-        return {"items": []}
 
-    raw = "\n".join(page.get("ParsedText", "") for page in result.get("ParsedResults", []))
-    items = _parse_receipt_text(raw)
-    return {"items": items}
-
-
-def _parse_receipt_text(text: str) -> list[dict]:
-    """Extract (name, price, quantity) tuples from OCR output."""
-    items: list[dict] = []
-    item_re = re.compile(r"^(.*?)\s+((?:\d[\d\s]*[,.]\s*\d{1,2}|\d{1,4}))\s*(?:K[CcčČ]|CZK|A|B|C|E|%)?\s*$", re.IGNORECASE)
-
-    for line in text.splitlines():
+def _parse_receipt_text(text: str) -> list:
+    """Fallback regex parser for OCR.space raw text."""
+    items = []
+    lines = text.split("\n")
+    for line in lines:
         line = line.strip()
-        if len(line) < 4: continue
-        if any(w in line.upper() for w in _SKIP_WORDS): continue
-
-        m = item_re.match(line)
-        if not m: continue
-
-        name = m.group(1).strip()
-        if len(name) < 3: continue
-        name = re.sub(r"^\d+\s*[xX]\s*", "", name).strip()
-
-        price_str = m.group(2).replace(" ", "").replace(",", ".")
-        try:
-            price = float(price_str)
-            if price > 0:
+        if not line or len(line) < 3: continue
+        # Simple regex for "Item Name  Price"
+        match = re.search(r'^(.*?)\s+((?:\d[\d\s]*[,.]\s*\d{1,2}|\d{1,4}))\s*(?:K[CcčČ]|CZK)?$', line)
+        if match:
+            name = match.group(1).strip()
+            if any(w in name.upper() for w in SKIP_WORDS): continue
+            price_str = match.group(2).replace(",", ".").replace(" ", "")
+            try:
+                price = float(price_str)
                 items.append({"name": name, "price": price, "quantity": 1})
-        except ValueError:
-            continue
+            except: pass
     return items
 
-
-# ---------------------------------------------------------------------------
-#  EAN lookup (Open Food Facts)
-# ---------------------------------------------------------------------------
-
 async def fetch_product_by_ean(hass: HomeAssistant, ean: str) -> dict | None:
-    """Query Open Food Facts for product info by EAN barcode."""
-    url = f"https://world.openfoodfacts.org/api/v2/product/{ean}.json"
-    headers = {"User-Agent": "HomeAssistant-Nakupnik/2.0"}
-    try:
-        async with aiohttp.ClientSession(headers=headers) as session:
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-                if resp.status != 200: return None
-                body = await resp.json()
-                if body.get("status") != 1: return None
-                p = body.get("product", {})
-                name = p.get("product_name_cs") or p.get("product_name") or "Neznámý produkt"
-                brand = p.get("brands", "")
-                if brand and brand.lower() not in name.lower():
-                    name = f"{brand} – {name}"
-                return {
-                    "name": name,
-                    "image_url": p.get("image_front_small_url") or p.get("image_url") or "",
-                    "ean": ean,
-                }
-    except Exception:
-        return None
-
-
-# ---------------------------------------------------------------------------
-#  Recipe fetching
-# ---------------------------------------------------------------------------
-
-async def fetch_recipe_content(hass: HomeAssistant, url: str) -> dict | None:
-    """Scrape a recipe page and return structured data."""
+    """Fetch product info from Open Food Facts."""
+    url = f"https://world.openfoodfacts.org/api/v0/product/{ean}.json"
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+            async with session.get(url, timeout=10) as resp:
                 if resp.status != 200: return None
-                html = await resp.text()
-        soup = BeautifulSoup(html, "html.parser")
-        recipe = {"title": soup.find("h1").get_text(strip=True) if soup.find("h1") else "Recept", "ingredients": [], "instructions": "", "url": url, "image_url": ""}
-        
-        # Meta image
-        og = soup.find("meta", property="og:image")
-        if og: recipe["image_url"] = og.get("content", "")
-
-        # Site-specific
-        domain = url.lower()
-        if "toprecepty.cz" in domain:
-            for el in soup.select(".recipe-ingredients__item, .recipe-ingredients li"): recipe["ingredients"].append(el.get_text(strip=True))
-            inst = soup.select_one(".recipe-instructions, .postup")
-            if inst: recipe["instructions"] = inst.get_text(strip=True)
-        elif "madebykristina.cz" in domain:
-            for el in soup.select(".suroviny-kika-obsah li"): recipe["ingredients"].append(el.get_text(strip=True))
-            inst = soup.select_one(".postup-kika-obsah")
-            if inst: recipe["instructions"] = inst.get_text(strip=True)
-            
-        # Fallback
-        if not recipe["ingredients"]:
-            for li in soup.find_all("li"):
-                txt = li.get_text(strip=True)
-                if txt and re.match(r"^\d", txt) and len(txt) < 150: recipe["ingredients"].append(txt)
-        
-        if not recipe["instructions"]:
-            paras = [p.get_text(strip=True) for p in soup.find_all("p") if len(p.get_text(strip=True)) > 80]
-            recipe["instructions"] = "\n\n".join(paras[:10])
-            
-        return recipe
-    except Exception:
-        return None
+                data = await resp.json()
+                if data.get("status") != 1: return None
+                p = data.get("product", {})
+                return {
+                    "name": p.get("product_name_cs") or p.get("product_name") or "Neznámý produkt",
+                    "image_url": p.get("image_front_url", ""),
+                    "category": p.get("categories", "").split(",")[0].strip(),
+                    "brand": p.get("brands", ""),
+                }
+    except: return None
