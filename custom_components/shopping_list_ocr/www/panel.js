@@ -5,8 +5,8 @@ const CATS=["","Ovoce a zelenina","Mléčné výrobky","Maso a ryby","Pečivo","
 const LOCS=["","Lednice","Mrazák","Spíž","Skříňka","Koupelna"];
 
 class ShoppingListPanel extends LitElement{
-static get properties(){return{hass:{type:Object},data:{type:Object},tab:{type:String},scan:{type:Boolean},search:{type:String},filterCat:{type:String},filterLoc:{type:String},editing:{type:String},editingReceipt:{type:String},toast:{type:String},uploadState:{type:String},uploadPreview:{type:String},uploadProgress:{type:Number},recipePortions:{type:Object},copyModalText:{type:String}};}
-constructor(){super();this.data={inventory:{},pending_receipts:{},recipes:{},consumption_log:[]};this.tab="dashboard";this.scan=false;this.search="";this.filterCat="";this.filterLoc="";this.editing="";this.editingReceipt="";this.toast="";this._sc=null;this.uploadState="";this.uploadPreview="";this.uploadProgress=0;this.recipePortions={};this.copyModalText="";}
+static get properties(){return{hass:{type:Object},data:{type:Object},tab:{type:String},scan:{type:Boolean},search:{type:String},filterCat:{type:String},filterLoc:{type:String},editing:{type:String},editingReceipt:{type:String},toast:{type:String},uploadState:{type:String},uploadPreview:{type:String},uploadProgress:{type:Number},recipePortions:{type:Object},copyModalText:{type:String},tabRec:{type:String},viewImage:{type:String}};}
+constructor(){super();this.data={inventory:{},pending_receipts:{},archived_receipts:{},recipes:{},consumption_log:[]};this.tab="dashboard";this.scan=false;this.search="";this.filterCat="";this.filterLoc="";this.editing="";this.editingReceipt="";this.toast="";this._sc=null;this.uploadState="";this.uploadPreview="";this.uploadProgress=0;this.recipePortions={};this.copyModalText="";this.tabRec="pending";this.viewImage="";}
 connectedCallback(){super.connectedCallback();this._fetch();this.hass?.connection?.subscribeEvents(()=>this._fetch(),"shopping_list_ocr_updated");}
 async _fetch(){if(!this.hass)return;try{const r=await this.hass.fetchWithAuth("/api/shopping_list/data");if(r.ok)this.data=await r.json();}catch(e){}}
 _t(m){this.toast=m;setTimeout(()=>{this.toast=""},3500);}
@@ -90,6 +90,7 @@ ${this.tab==='inventory'?this._inv(inv):''}
 ${this.tab==='receipts'?this._rec():''}
 ${this.tab==='recipes'?this._rcp():''}
 ${this.scan?html`<div class="modal"><div id="reader"></div><button class="btn bo" style="margin-top:16px" @click=${this._toggleScan}>Zavřít</button></div>`:''}
+${this.viewImage?html`<div class="modal" @click=${()=>this.viewImage=""}><img src="${this.viewImage}" style="max-width:90%;max-height:80vh;border-radius:8px"><button class="btn bo" style="margin-top:16px" @click=${()=>this.viewImage=""}>Zavřít</button></div>`:''}
 ${this.copyModalText?html`<div class="modal" @click=${()=>this.copyModalText=""}><div class="c" style="width:100%;max-width:500px;padding:20px" @click=${e=>e.stopPropagation()}><h3 style="margin-top:0">Ingredience do nákupu</h3><p class="cm">Zkopírujte si seznam do nákupní aplikace:</p><textarea style="width:100%;height:300px;background:rgba(0,0,0,0.2);color:inherit;border:1px solid var(--border);border-radius:8px;padding:10px;font-family:monospace;font-size:0.9rem" readonly>${this.copyModalText}</textarea><button class="btn bp bw" style="margin-top:16px" @click=${()=>this.copyModalText=""}>Zavřít</button></div></div>`:''}
 ${this.toast?html`<div class="toast">${this.toast}</div>`:''}
 </div>`;}
@@ -174,8 +175,15 @@ ${isEditing?html`
 `}
 </div></div>`;}
 
-_rec(){const rr=Object.values(this.data.pending_receipts||{});
+_rec(){
+const rr=Object.values(this.data.pending_receipts||{}).sort((a,b)=>new Date(b.date)-new Date(a.date));
+const ar=Object.values(this.data.archived_receipts||{}).sort((a,b)=>new Date(b.date)-new Date(a.date));
 return html`<section>
+<div class="tabs" style="margin-bottom:16px;background:rgba(255,255,255,0.02)">
+<div class="tb ${this.tabRec==='pending'?'on':''}" @click=${()=>this.tabRec='pending'}>Ke zpracování${rr.length?html`<span class="bdg">${rr.length}</span>`:''}</div>
+<div class="tb ${this.tabRec==='archived'?'on':''}" @click=${()=>this.tabRec='archived'}>Archiv (${ar.length})</div>
+</div>
+${this.tabRec==='pending'?html`
 <div class="tbar">
 <input type="file" id="rf" accept="image/*" capture="environment" style="display:none" @change=${this._upload}>
 <button class="btn bg" @click=${()=>this.shadowRoot.getElementById('rf').click()} ?disabled=${!!this.uploadState}><ha-icon icon="mdi:camera"></ha-icon> ${this.uploadState?'Zpracovávám…':'Nahrát účtenku'}</button>
@@ -203,11 +211,15 @@ ${this.uploadState==='error'?html`<ha-icon icon="mdi:alert-circle" style="color:
 ${rr.length===0&&!this.uploadState?html`<div class="empty"><p><strong>Žádné účtenky</strong></p><p>Nahrajte fotku účtenky tlačítkem výše.</p></div>`:html`<div class="gr">
 ${rr.map(r=>{
 const isEd=this.editingReceipt===r.id;
+const imgUrl=r.image_path?r.image_path.replace('/config/www/','/local/'):'';
 return html`
 <div class="c">${r.store?html`<span class="st">${r.store}</span>`:''}<div class="cb">
 <div class="cm" style="display:flex;justify-content:space-between">
   <span>${new Date(r.date).toLocaleString("cs")}</span>
-  <button class="btn bo bs" style="padding:2px 6px" @click=${()=>{this.editingReceipt=isEd?'':r.id}}>${isEd?'Zavřít':'Upravit'}</button>
+  <div style="display:flex;gap:4px">
+    ${imgUrl?html`<button class="btn bo bs" style="padding:2px 6px" @click=${()=>this.viewImage=imgUrl}><ha-icon icon="mdi:image" style="--mdc-icon-size:14px"></ha-icon></button>`:''}
+    <button class="btn bo bs" style="padding:2px 6px" @click=${()=>{this.editingReceipt=isEd?'':r.id}}>${isEd?'Zavřít':'Upravit'}</button>
+  </div>
 </div>
 ${isEd?html`
 <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
@@ -227,11 +239,26 @@ ${isEd?html`
 </div>
 `:html`
 ${r.items.length===0?html`<div class="cm" style="margin:10px 0;text-align:center">Žádné rozpoznané položky.<br>Přidejte je ručně přes Upravit.</div>`:r.items.map(i=>html`<div class="ri"><span>${i.name}</span><span style="font-weight:600">${i.price} Kč</span></div>`)}
-<div class="cm" style="margin-top:6px">Celkem: <strong>${r.items.reduce((s,i)=>s+i.price,0).toFixed(0)} Kč</strong></div>
+<div class="cm" style="margin-top:6px">Celkem: <strong>${(r.total||r.items.reduce((s,i)=>s+i.price,0)).toFixed(2)} Kč</strong></div>
 <button class="btn bp bw" style="margin-top:8px" @click=${()=>{this._svc("confirm_receipt",{receipt_id:r.id});this._t("Přidáno do skladu");setTimeout(()=>this._fetch(),1000);}}>Potvrdit</button>
 `}
 </div></div>`})}
 </div>`}
+`:html`
+${ar.length===0?html`<div class="empty"><p><strong>Žádné archivované účtenky</strong></p><p>Potvrzené účtenky se automaticky přesunou sem.</p></div>`:html`<div class="gr">
+${ar.map(r=>{
+const imgUrl=r.image_path?r.image_path.replace('/config/www/','/local/'):'';
+return html`
+<div class="c" style="opacity:0.8">${r.store?html`<span class="st" style="background:var(--border)">${r.store}</span>`:''}<div class="cb">
+<div class="cm" style="display:flex;justify-content:space-between">
+  <span>${new Date(r.date).toLocaleString("cs")}</span>
+  ${imgUrl?html`<button class="btn bo bs" style="padding:2px 6px" @click=${()=>this.viewImage=imgUrl}><ha-icon icon="mdi:image" style="--mdc-icon-size:14px"></ha-icon> Zobrazit</button>`:''}
+</div>
+<div class="cm" style="margin:10px 0">${r.items.length} položek</div>
+<div class="cm">Celkem: <strong>${(r.total||r.items.reduce((s,i)=>s+i.price,0)).toFixed(2)} Kč</strong></div>
+</div></div>`})}
+</div>`}
+`}
 </section>`;}
 
 _scaleIng(text, p, base){

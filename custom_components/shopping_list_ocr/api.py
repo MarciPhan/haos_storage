@@ -59,31 +59,38 @@ def _prepare_image(image_path: str, max_size_kb: int = 1024) -> tuple[str, str]:
 #  OCR
 # ---------------------------------------------------------------------------
 
-async def process_receipt_image(hass: HomeAssistant, image_path: str, gemini_key: str = "", ocr_space_key: str = "") -> list[dict]:
-    """Send an image to OCR and return parsed items (Gemini first, fallback to ocr.space)."""
+async def process_receipt_image(hass: HomeAssistant, image_path: str, gemini_key: str = "", ocr_space_key: str = "") -> dict:
+    """Send an image to OCR and return parsed data (Gemini first, fallback to ocr.space)."""
     if not os.path.isfile(image_path):
         _LOGGER.error("Receipt image not found: %s", image_path)
-        return []
+        return {"items": []}
 
     if gemini_key:
         _LOGGER.info("Using Gemini 1.5 Flash for OCR")
-        items = await process_receipt_with_gemini(hass, image_path, gemini_key)
-        if items:
-            return items
+        result = await process_receipt_with_gemini(hass, image_path, gemini_key)
+        if result and result.get("items"):
+            return result
         _LOGGER.warning("Gemini OCR failed or returned no items, falling back to ocr.space")
 
     return await process_receipt_with_ocr_space(hass, image_path, ocr_space_key)
 
 
-async def process_receipt_with_gemini(hass: HomeAssistant, image_path: str, api_key: str) -> list[dict]:
-    """Use Gemini 1.5 Flash to extract items and prices from a receipt."""
+async def process_receipt_with_gemini(hass: HomeAssistant, image_path: str, api_key: str) -> dict | None:
+    """Use Gemini 1.5 Flash to extract full receipt data."""
     b64, mime = await hass.async_add_executor_job(_prepare_image, image_path, 2048) # Gemini handles up to 2MB easily
     
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
     
-    prompt = """Extrahuje položky z této účtenky. Pro každou položku vrať JSON objekt se strukturou:
-{"name": "název produktu", "price": 12.90, "quantity": 1}
-Vrať pouze čistý seznam JSON objektů v poli, nic jiného. Ceny musí být čísla. Pokud je u položky počet kusů (např. 2x), nastav quantity. Ignoruj slevy/vratky."""
+    prompt = """Extrahuje data z této účtenky. Vrať čistý JSON objekt s touto přesnou strukturou:
+{
+  "store": "Název obchodu (např. Tesco, Lidl, Albert... pokud chybí, nech prázdné)",
+  "date": "Datum nákupu ve formátu YYYY-MM-DDTHH:MM:SS (pokud chybí, nech prázdné)",
+  "total": 182.97,
+  "items": [
+    {"name": "název produktu", "price": 12.90, "quantity": 1}
+  ]
+}
+Vrať pouze JSON, žádný jiný text. Ceny musí být čísla. Ignoruj slevy/vratky a nesmyslné texty jako patičky."""
 
     payload = {
         "contents": [{
@@ -106,19 +113,22 @@ Vrať pouze čistý seznam JSON objektů v poli, nic jiného. Ceny musí být č
                     return []
                 result = await resp.json()
                 text = result['candidates'][0]['content']['parts'][0]['text']
-                items = json.loads(text)
-                if isinstance(items, list):
-                    for item in items:
-                        item["price"] = float(item.get("price", 0))
-                        item["quantity"] = int(item.get("quantity", 1))
-                    return items
+                data = json.loads(text)
+                if isinstance(data, dict):
+                    items = data.get("items", [])
+                    if isinstance(items, list):
+                        for item in items:
+                            item["price"] = float(item.get("price", 0))
+                            item["quantity"] = int(item.get("quantity", 1))
+                        data["items"] = items
+                    return data
     except Exception as exc:
         _LOGGER.error("Gemini OCR request failed: %s", exc)
-    return []
+    return None
 
 
-async def process_receipt_with_ocr_space(hass: HomeAssistant, image_path: str, api_key: str) -> list[dict]:
-    """Send an image to OCR.space and return parsed items."""
+async def process_receipt_with_ocr_space(hass: HomeAssistant, image_path: str, api_key: str) -> dict:
+    """Send an image to OCR.space and return parsed data fallback."""
     # ocr.space free tier is limited to 1MB
     b64, mime = await hass.async_add_executor_job(_prepare_image, image_path, 1024)
     
@@ -144,18 +154,19 @@ async def process_receipt_with_ocr_space(hass: HomeAssistant, image_path: str, a
             ) as resp:
                 if resp.status != 200:
                     _LOGGER.error("OCR.space API HTTP %d", resp.status)
-                    return []
+                    return {"items": []}
                 result = await resp.json()
     except Exception as exc:
         _LOGGER.error("OCR.space request failed: %s", exc)
-        return []
+        return {"items": []}
 
     if result.get("OCRExitCode") != 1:
         _LOGGER.error("OCR failed: %s", result.get("ErrorMessage"))
-        return []
+        return {"items": []}
 
     raw = "\n".join(page.get("ParsedText", "") for page in result.get("ParsedResults", []))
-    return _parse_receipt_text(raw)
+    items = _parse_receipt_text(raw)
+    return {"items": items}
 
 
 def _parse_receipt_text(text: str) -> list[dict]:

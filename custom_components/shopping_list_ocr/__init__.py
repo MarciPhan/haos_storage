@@ -181,7 +181,7 @@ async def async_setup_entry(hass: HomeAssistant, entry):
     store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
     data = await store.async_load() or {}
     # Ensure all top-level keys exist
-    for key in ("inventory", "pending_receipts", "recipes", "keep_config", "consumption_log", "meal_plan"):
+    for key in ("inventory", "pending_receipts", "archived_receipts", "recipes", "keep_config", "consumption_log", "meal_plan"):
         data.setdefault(key, {} if key not in ("consumption_log", "meal_plan") else [])
 
     hass.data.setdefault(DOMAIN, {})
@@ -261,22 +261,25 @@ async def async_setup_entry(hass: HomeAssistant, entry):
 
         gemini_key = entry.data.get(CONF_GEMINI_KEY, "")
         ocr_key = entry.data.get(CONF_OCR_SPACE_KEY, "")
-        items = await process_receipt_image(hass, image_path, gemini_key, ocr_key)
+        result = await process_receipt_image(hass, image_path, gemini_key, ocr_key)
+        items = result.get("items", [])
         
         # We save the receipt even if items list is empty, allowing for manual entry
         all_text = " ".join(i.get("name", "") for i in items) if items else ""
-        store_name = _detect_store(all_text)
+        store_name = result.get("store") or _detect_store(all_text)
+        date = result.get("date") or dt_util.now().isoformat()
 
         receipt_id = str(uuid.uuid4())
         data["pending_receipts"][receipt_id] = {
             "id": receipt_id,
-            "date": dt_util.now().isoformat(),
-            "items": items or [],
+            "date": date,
+            "items": items,
             "image_path": image_path,
             "store": store_name,
+            "total": result.get("total")
         }
         await _save()
-        _LOGGER.info("Saved receipt %s: %d items (store=%s)", receipt_id, len(items or []), store_name)
+        _LOGGER.info("Saved receipt %s: %d items (store=%s)", receipt_id, len(items), store_name)
 
     async def handle_scan_folder(call: ServiceCall):
         """Scan all new images in a folder."""
@@ -296,16 +299,18 @@ async def async_setup_entry(hass: HomeAssistant, entry):
                 continue
             gemini_key = entry.data.get(CONF_GEMINI_KEY, "")
             ocr_key = entry.data.get(CONF_OCR_SPACE_KEY, "")
-            items = await process_receipt_image(hass, full, gemini_key, ocr_key)
+            result = await process_receipt_image(hass, full, gemini_key, ocr_key)
+            items = result.get("items", [])
             
             all_text = " ".join(i.get("name", "") for i in items) if items else ""
             rid = str(uuid.uuid4())
             data["pending_receipts"][rid] = {
                 "id": rid,
-                "date": dt_util.now().isoformat(),
-                "items": items or [],
+                "date": result.get("date") or dt_util.now().isoformat(),
+                "items": items,
                 "image_path": full,
-                "store": _detect_store(all_text),
+                "store": result.get("store") or _detect_store(all_text),
+                "total": result.get("total")
             }
             count += 1
         if count:
@@ -348,6 +353,11 @@ async def async_setup_entry(hass: HomeAssistant, entry):
                     image_url=item.get("image_url", ""),
                     store=receipt.get("store", ""),
                 )
+        
+        # Move to archive
+        receipt["archived_at"] = dt_util.now().isoformat()
+        data["archived_receipts"][rid] = receipt
+        
         await _save()
 
     async def handle_update_inventory(call: ServiceCall):
