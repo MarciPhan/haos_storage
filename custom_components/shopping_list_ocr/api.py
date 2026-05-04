@@ -107,64 +107,77 @@ Důležité:
                 {"text": prompt},
                 {"inline_data": {"mime_type": mime, "data": b64}}
             ]
-        }],
-        "generationConfig": {
-            "response_mime_type": "application/json"
-        }
+        }]
     }
 
+    raw_text = ""
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(url, json=payload, timeout=aiohttp.ClientTimeout(total=30)) as resp:
                 if resp.status != 200:
                     err = await resp.text()
                     _LOGGER.error("Gemini API error %d: %s", resp.status, err)
-                    return None
+                    return {"items": [], "debug": f"Gemini API Error {resp.status}: {err}"}
+                
                 result = await resp.json()
                 if 'candidates' not in result or not result['candidates']:
-                    _LOGGER.error("Gemini returned no candidates: %s", result)
-                    return None
+                    return {"items": [], "debug": f"Gemini returned no candidates. Raw: {result}"}
                 
                 content = result['candidates'][0].get('content', {})
-                if 'parts' not in content or not content['parts']:
-                    _LOGGER.error("Gemini returned empty parts: %s", result)
-                    return None
+                parts = content.get('parts', [])
+                if not parts:
+                    return {"items": [], "debug": f"Gemini returned no parts. Raw: {result}"}
                     
-                text = content['parts'][0].get('text', '')
+                raw_text = parts[0].get('text', '')
                 
-                # Očištění o případné markdown značky nebo úvodní/závěrečný text
+                # Robust extraction: find the FIRST { and LAST }
                 import re
-                match = re.search(r'\{.*\}', text, re.DOTALL)
-                if match:
-                    text = match.group(0)
+                json_str = ""
+                start = raw_text.find('{')
+                end = raw_text.rfind('}')
+                if start != -1 and end != -1 and end > start:
+                    json_str = raw_text[start:end+1]
                 else:
-                    text = text.strip()
+                    return {"items": [], "debug": "No JSON object found in response", "raw_text": raw_text}
                 
-                data = json.loads(text)
-                if isinstance(data, dict):
-                    # Očištění čísel
-                    def parse_num(v, is_int=False):
-                        if v is None: return 0 if not is_int else 1
-                        v_str = str(v).replace(',', '.').strip()
-                        v_str = re.sub(r'[^\d.-]', '', v_str)
-                        try:
-                            return int(float(v_str)) if is_int else float(v_str)
-                        except ValueError:
-                            return 0 if not is_int else 1
-                            
-                    data["total"] = parse_num(data.get("total"))
-                    
-                    items = data.get("items", [])
-                    if isinstance(items, list):
-                        for item in items:
-                            item["price"] = parse_num(item.get("price"), is_int=False)
-                            item["quantity"] = parse_num(item.get("quantity", 1), is_int=True)
-                            
-                            # Expiry days default
-                            exp = item.get("expiry_days")
-                            item["expiry_days"] = int(exp) if exp is not None else None
-                        data["items"] = items
-                    return data
+                try:
+                    data = json.loads(json_str)
+                except Exception as je:
+                    return {"items": [], "debug": f"JSON Parse Error: {je}", "raw_text": raw_text}
+                
+                if not isinstance(data, dict):
+                    return {"items": [], "debug": "Extracted JSON is not a dictionary", "raw_text": raw_text}
+                
+                # Clean and normalize
+                def parse_num(v, is_int=False):
+                    if v is None: return 0 if not is_int else 1
+                    v_str = str(v).replace(',', '.').replace(' ', '').strip()
+                    v_str = re.sub(r'[^\d.-]', '', v_str)
+                    try:
+                        return int(float(v_str)) if is_int else float(v_str)
+                    except:
+                        return 0 if not is_int else 1
+
+                cleaned = {
+                    "store": data.get("store", ""),
+                    "date": data.get("date", ""),
+                    "total": parse_num(data.get("total", 0)),
+                    "items": [],
+                    "raw_text": raw_text
+                }
+                
+                items = data.get("items")
+                if isinstance(items, list):
+                    for i in items:
+                        if not isinstance(i, dict): continue
+                        cleaned["items"].append({
+                            "name": str(i.get("name", "Neznámá položka")),
+                            "price": parse_num(i.get("price", 0)),
+                            "quantity": parse_num(i.get("quantity", 1), is_int=True),
+                            "expiry_days": i.get("expiry_days")
+                        })
+                
+                return cleaned
     except Exception as exc:
         import traceback
         _LOGGER.error("Gemini OCR request failed: %s", exc)

@@ -225,6 +225,7 @@ return html`
 </div>
 ${isEd?html`
 <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
+  ${r.raw_text?html`<details style="font-size:10px;margin-bottom:8px"><summary>Zobrazit surovou odpověď AI</summary><pre style="white-space:pre-wrap;background:rgba(0,0,0,0.2);padding:4px">${r.raw_text}</pre></details>`:''}
   <input type="text" placeholder="Obchod" .value=${r.store||''} @input=${e=>r.store=e.target.value} style="padding:6px;border-radius:6px;background:rgba(255,255,255,0.05);border:1px solid var(--border);color:inherit">
   ${r.items.map((i,idx)=>html`
     <div class="edit-row">

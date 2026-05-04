@@ -133,7 +133,7 @@ class UploadView(HomeAssistantView):
             return web.json_response({"error": "No file field"}, status=400)
 
         filename = field.filename or "upload.jpg"
-        upload_dir = "/config/www/uctenky/"
+        upload_dir = self._hass.config.path("www", "uctenky")
         os.makedirs(upload_dir, exist_ok=True)
         ts = dt_util.now().strftime("%Y%m%d_%H%M%S")
         dest = os.path.join(upload_dir, f"{ts}_{filename}")
@@ -255,33 +255,41 @@ async def async_setup_entry(hass: HomeAssistant, entry):
 
     async def handle_scan_receipt(call: ServiceCall):
         """Scan a single receipt image via OCR."""
-        image_path = call.data.get("image_path", "")
-        if not image_path or not os.path.isfile(image_path):
-            _LOGGER.error("Image not found: %s", image_path)
-            return
+        try:
+            image_path = call.data.get("image_path", "")
+            if not image_path:
+                _LOGGER.error("No image_path provided")
+                return
+            if not os.path.isfile(image_path):
+                _LOGGER.error("Image file NOT FOUND on disk: %s", image_path)
+                return
 
-        gemini_key = entry.data.get(CONF_GEMINI_KEY, "")
-        ocr_key = entry.data.get(CONF_OCR_SPACE_KEY, "")
-        result = await process_receipt_image(hass, image_path, gemini_key, ocr_key)
-        items = result.get("items", [])
-        
-        # We save the receipt even if items list is empty, allowing for manual entry
-        all_text = " ".join(i.get("name", "") for i in items) if items else ""
-        store_name = result.get("store") or _detect_store(all_text)
-        date = result.get("date") or dt_util.now().isoformat()
+            gemini_key = entry.data.get(CONF_GEMINI_KEY, "")
+            ocr_key = entry.data.get(CONF_OCR_SPACE_KEY, "")
+            
+            _LOGGER.info("Starting OCR for %s", image_path)
+            result = await process_receipt_image(hass, image_path, gemini_key, ocr_key)
+            
+            items = result.get("items") or []
+            store_name = result.get("store") or _detect_store(" ".join(i.get("name", "") for i in items))
+            date = result.get("date") or dt_util.now().isoformat()
 
-        receipt_id = str(uuid.uuid4())
-        data["pending_receipts"][receipt_id] = {
-            "id": receipt_id,
-            "date": date,
-            "items": items,
-            "image_path": image_path,
-            "store": store_name,
-            "total": result.get("total"),
-            "debug": result.get("debug")
-        }
-        await _save()
-        _LOGGER.info("Saved receipt %s: %d items (store=%s)", receipt_id, len(items), store_name)
+            receipt_id = str(uuid.uuid4())
+            data["pending_receipts"][receipt_id] = {
+                "id": receipt_id,
+                "date": date,
+                "items": items,
+                "image_path": image_path,
+                "store": store_name,
+                "total": result.get("total", 0),
+                "debug": result.get("debug"),
+                "raw_text": result.get("raw_text")
+            }
+            await _save()
+            _LOGGER.info("Successfully saved receipt %s", receipt_id)
+        except Exception as exc:
+            import traceback
+            _LOGGER.error("CRITICAL ERROR in handle_scan_receipt: %s", traceback.format_exc())
 
     async def handle_scan_folder(call: ServiceCall):
         """Scan all new images in a folder."""
