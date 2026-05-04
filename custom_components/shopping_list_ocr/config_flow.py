@@ -19,7 +19,7 @@ class ShoppingListConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="user",
             data_schema=vol.Schema({
                 vol.Optional(CONF_GEMINI_KEY): str,
-                vol.Optional(CONF_OCR_SPACE_KEY, default="[REDACTED]"): str,
+                vol.Optional(CONF_OCR_SPACE_KEY): str,
             })
         )
 
@@ -54,7 +54,7 @@ class ShoppingListOptionsFlow(config_entries.OptionsFlow):
                 ): str,
                 vol.Optional(
                     CONF_OCR_SPACE_KEY, 
-                    default=data.get(CONF_OCR_SPACE_KEY, "[REDACTED]")
+                    default=data.get(CONF_OCR_SPACE_KEY, "")
                 ): str,
             })
         )

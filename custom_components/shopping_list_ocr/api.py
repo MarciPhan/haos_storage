@@ -123,7 +123,7 @@ async def process_receipt_with_ocr_space(hass: HomeAssistant, image_path: str, a
     b64, mime = await hass.async_add_executor_job(_prepare_image, image_path, 1024)
     
     # Use default key if none provided
-    key = api_key or "[REDACTED]"
+    key = api_key or ""
     
     payload = {
         "apikey": key,
