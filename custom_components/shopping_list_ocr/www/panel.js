@@ -308,10 +308,15 @@ ${ings.map(i=>html`<div style="margin-bottom:4px">• ${i}</div>`)}
 async _upload(e){
 const el = e.target;
 const f=el?.files?.[0];if(!f)return;
-const u=URL.createObjectURL(f);this.uploadPreview=u;this.uploadState="uploading";this.uploadProgress=10;this.requestUpdate();
-try{const r=new FileReader();
-const b=await new Promise((res,rej)=>{r.onload=()=>res(r.result);r.onerror=rej;r.readAsDataURL(f);});
-const p=await this.hass.callApi("POST","shopping_list/upload",{"image":b});
+// Show preview
+const u=URL.createObjectURL(f);this.uploadPreview=u;this.uploadState="uploading";this.uploadProgress=10;this.tab="receipts";this.requestUpdate();
+const fd=new FormData();fd.append("file",f);
+// Animate upload progress
+const pInt=setInterval(()=>{if(this.uploadProgress<30)this.uploadProgress+=4;},200);
+try{
+const r=await this.hass.fetchWithAuth("/api/shopping_list/upload",{method:"POST",body:fd});
+clearInterval(pInt);
+if(r.ok){
 this.uploadState="processing";this.uploadProgress=40;
 // Animate OCR processing
 const oInt=setInterval(()=>{if(this.uploadProgress<85)this.uploadProgress+=3;},400);
@@ -331,8 +336,11 @@ setTimeout(()=>{this.uploadState="";this.uploadPreview="";this.uploadProgress=0;
 this._t("OCR selhalo – zkuste to znovu");
 setTimeout(()=>{this.uploadState="";this.uploadPreview="";this.uploadProgress=0;},5000);
 }}},2000);
-}catch(err){this.uploadState="error";this.uploadProgress=100;
-this._t("Chyba nahrávání");
+}else{this.uploadState="error";this.uploadProgress=100;
+this._t("Nahrávání selhalo (HTTP chyba)");
+setTimeout(()=>{this.uploadState="";this.uploadPreview="";this.uploadProgress=0;},5000);}
+}catch(err){clearInterval(pInt);this.uploadState="error";this.uploadProgress=100;
+this._t("Chyba nahrávání fotky");
 setTimeout(()=>{this.uploadState="";this.uploadPreview="";this.uploadProgress=0;},5000);}
 if(el) el.value="";}
 
