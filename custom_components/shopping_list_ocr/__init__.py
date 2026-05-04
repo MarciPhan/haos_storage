@@ -11,7 +11,7 @@ from homeassistant.helpers.storage import Store
 from homeassistant.components.http import HomeAssistantView
 import homeassistant.util.dt as dt_util
 
-from .const import DOMAIN, STORAGE_KEY, STORAGE_VERSION, EVENT_RECEIPTS_UPDATED
+from .const import DOMAIN, STORAGE_KEY, STORAGE_VERSION, EVENT_RECEIPTS_UPDATED, CONF_GEMINI_KEY, CONF_OCR_SPACE_KEY
 from .api import (
     process_receipt_image,
     fetch_recipe_content,
@@ -259,24 +259,24 @@ async def async_setup_entry(hass: HomeAssistant, entry):
             _LOGGER.error("Image not found: %s", image_path)
             return
 
-        items = await process_receipt_image(hass, image_path)
-        if not items:
-            _LOGGER.warning("No items found on receipt: %s", image_path)
-            return
-
-        all_text = " ".join(i["name"] for i in items)
+        gemini_key = entry.data.get(CONF_GEMINI_KEY, "")
+        ocr_key = entry.data.get(CONF_OCR_SPACE_KEY, "")
+        items = await process_receipt_image(hass, image_path, gemini_key, ocr_key)
+        
+        # We save the receipt even if items list is empty, allowing for manual entry
+        all_text = " ".join(i.get("name", "") for i in items) if items else ""
         store_name = _detect_store(all_text)
 
         receipt_id = str(uuid.uuid4())
         data["pending_receipts"][receipt_id] = {
             "id": receipt_id,
             "date": dt_util.now().isoformat(),
-            "items": items,
+            "items": items or [],
             "image_path": image_path,
             "store": store_name,
         }
         await _save()
-        _LOGGER.info("Scanned receipt %s: %d items (store=%s)", receipt_id, len(items), store_name)
+        _LOGGER.info("Saved receipt %s: %d items (store=%s)", receipt_id, len(items or []), store_name)
 
     async def handle_scan_folder(call: ServiceCall):
         """Scan all new images in a folder."""
@@ -294,21 +294,39 @@ async def async_setup_entry(hass: HomeAssistant, entry):
             full = os.path.join(folder, fname)
             if full in known:
                 continue
-            items = await process_receipt_image(hass, full)
-            if items:
-                all_text = " ".join(i["name"] for i in items)
-                rid = str(uuid.uuid4())
-                data["pending_receipts"][rid] = {
-                    "id": rid,
-                    "date": dt_util.now().isoformat(),
-                    "items": items,
-                    "image_path": full,
-                    "store": _detect_store(all_text),
-                }
-                count += 1
+            gemini_key = entry.data.get(CONF_GEMINI_KEY, "")
+            ocr_key = entry.data.get(CONF_OCR_SPACE_KEY, "")
+            items = await process_receipt_image(hass, full, gemini_key, ocr_key)
+            
+            all_text = " ".join(i.get("name", "") for i in items) if items else ""
+            rid = str(uuid.uuid4())
+            data["pending_receipts"][rid] = {
+                "id": rid,
+                "date": dt_util.now().isoformat(),
+                "items": items or [],
+                "image_path": full,
+                "store": _detect_store(all_text),
+            }
+            count += 1
         if count:
             await _save()
         _LOGGER.info("Folder scan complete: %d new receipts from %s", count, folder)
+
+    async def handle_update_pending_receipt(call: ServiceCall):
+        """Update items or store of a pending receipt."""
+        rid = call.data.get("receipt_id", "")
+        if rid not in data["pending_receipts"]:
+            return
+        
+        if call.data.get("action") == "delete":
+            data["pending_receipts"].pop(rid)
+        else:
+            if "items" in call.data:
+                data["pending_receipts"][rid]["items"] = call.data["items"]
+            if "store" in call.data:
+                data["pending_receipts"][rid]["store"] = call.data["store"]
+                
+        await _save()
 
     async def handle_confirm_receipt(call: ServiceCall):
         """Move pending receipt items into inventory."""
@@ -486,6 +504,7 @@ async def async_setup_entry(hass: HomeAssistant, entry):
     svc(DOMAIN, "scan_receipt", handle_scan_receipt)
     svc(DOMAIN, "scan_folder", handle_scan_folder)
     svc(DOMAIN, "confirm_receipt", handle_confirm_receipt)
+    svc(DOMAIN, "update_pending_receipt", handle_update_pending_receipt)
     svc(DOMAIN, "update_inventory", handle_update_inventory)
     svc(DOMAIN, "add_item_by_ean", handle_add_item_by_ean)
     svc(DOMAIN, "add_recipe", handle_add_recipe)

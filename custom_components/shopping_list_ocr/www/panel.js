@@ -5,8 +5,8 @@ const CATS=["","Ovoce a zelenina","Mléčné výrobky","Maso a ryby","Pečivo","
 const LOCS=["","Lednice","Mrazák","Spíž","Skříňka","Koupelna"];
 
 class ShoppingListPanel extends LitElement{
-static get properties(){return{hass:{type:Object},data:{type:Object},tab:{type:String},scan:{type:Boolean},search:{type:String},filterCat:{type:String},filterLoc:{type:String},editing:{type:String},toast:{type:String},uploadState:{type:String},uploadPreview:{type:String},uploadProgress:{type:Number},recipePortions:{type:Object},copyModalText:{type:String}};}
-constructor(){super();this.data={inventory:{},pending_receipts:{},recipes:{},consumption_log:[]};this.tab="dashboard";this.scan=false;this.search="";this.filterCat="";this.filterLoc="";this.editing="";this.toast="";this._sc=null;this.uploadState="";this.uploadPreview="";this.uploadProgress=0;this.recipePortions={};this.copyModalText="";}
+static get properties(){return{hass:{type:Object},data:{type:Object},tab:{type:String},scan:{type:Boolean},search:{type:String},filterCat:{type:String},filterLoc:{type:String},editing:{type:String},editingReceipt:{type:String},toast:{type:String},uploadState:{type:String},uploadPreview:{type:String},uploadProgress:{type:Number},recipePortions:{type:Object},copyModalText:{type:String}};}
+constructor(){super();this.data={inventory:{},pending_receipts:{},recipes:{},consumption_log:[]};this.tab="dashboard";this.scan=false;this.search="";this.filterCat="";this.filterLoc="";this.editing="";this.editingReceipt="";this.toast="";this._sc=null;this.uploadState="";this.uploadPreview="";this.uploadProgress=0;this.recipePortions={};this.copyModalText="";}
 connectedCallback(){super.connectedCallback();this._fetch();this.hass?.connection?.subscribeEvents(()=>this._fetch(),"shopping_list_ocr_updated");}
 async _fetch(){if(!this.hass)return;try{const r=await this.hass.fetchWithAuth("/api/shopping_list/data");if(r.ok)this.data=await r.json();}catch(e){}}
 _t(m){this.toast=m;setTimeout(()=>{this.toast=""},3500);}
@@ -200,13 +200,38 @@ ${this.uploadState==='error'?html`<ha-icon icon="mdi:alert-circle" style="color:
 <div class="cm">${this.uploadState==='uploading'?'Odesílám na server…':this.uploadState==='processing'?'Rozpoznávám text na účtence…':this.uploadState==='done'?'Účtenka byla úspěšně zpracována':this.uploadState==='error'?'Zkuste to znovu s lepší fotkou':''}  </div>
 </div>
 </div>`:''}
-${rr.length===0&&!this.uploadState?html`<div class="empty"><p><strong>Žádné účtenky</strong></p><p>Nahrajte fotku účtenky tlačítkem výše.</p></div>`:html`<div class="gr">${rr.map(r=>html`
+${rr.length===0&&!this.uploadState?html`<div class="empty"><p><strong>Žádné účtenky</strong></p><p>Nahrajte fotku účtenky tlačítkem výše.</p></div>`:html`<div class="gr">
+${rr.map(r=>{
+const isEd=this.editingReceipt===r.id;
+return html`
 <div class="c">${r.store?html`<span class="st">${r.store}</span>`:''}<div class="cb">
-<div class="cm">${new Date(r.date).toLocaleString("cs")}</div>
-${r.items.map(i=>html`<div class="ri"><span>${i.name}</span><span style="font-weight:600">${i.price} Kč</span></div>`)}
+<div class="cm" style="display:flex;justify-content:space-between">
+  <span>${new Date(r.date).toLocaleString("cs")}</span>
+  <button class="btn bo bs" style="padding:2px 6px" @click=${()=>{this.editingReceipt=isEd?'':r.id}}>${isEd?'Zavřít':'Upravit'}</button>
+</div>
+${isEd?html`
+<div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
+  <input type="text" placeholder="Obchod" .value=${r.store||''} @input=${e=>r.store=e.target.value} style="padding:6px;border-radius:6px;background:rgba(255,255,255,0.05);border:1px solid var(--border);color:inherit">
+  ${r.items.map((i,idx)=>html`
+    <div class="edit-row">
+      <input type="text" .value=${i.name} @input=${e=>i.name=e.target.value} style="flex:2">
+      <input type="number" .value=${String(i.price)} @input=${e=>i.price=parseFloat(e.target.value)} style="flex:1;max-width:60px">
+      <button class="qb" style="color:var(--r)" @click=${()=>{r.items.splice(idx,1);this.requestUpdate();}}>×</button>
+    </div>
+  `)}
+  <button class="btn bo bs" @click=${()=>{r.items.push({name:"",price:0,quantity:1});this.requestUpdate();}}>+ Položka</button>
+  <div style="display:flex;gap:4px">
+    <button class="btn bg bw" @click=${()=>this._saveRec(r)}>Uložit</button>
+    <button class="btn bo" style="color:var(--r)" @click=${()=>this._delRec(r.id)}>Smazat</button>
+  </div>
+</div>
+`:html`
+${r.items.length===0?html`<div class="cm" style="margin:10px 0;text-align:center">Žádné rozpoznané položky.<br>Přidejte je ručně přes Upravit.</div>`:r.items.map(i=>html`<div class="ri"><span>${i.name}</span><span style="font-weight:600">${i.price} Kč</span></div>`)}
 <div class="cm" style="margin-top:6px">Celkem: <strong>${r.items.reduce((s,i)=>s+i.price,0).toFixed(0)} Kč</strong></div>
 <button class="btn bp bw" style="margin-top:8px" @click=${()=>{this._svc("confirm_receipt",{receipt_id:r.id});this._t("Přidáno do skladu");setTimeout(()=>this._fetch(),1000);}}>Potvrdit</button>
-</div></div>`)}</div>`}
+`}
+</div></div>`})}
+</div>`}
 </section>`;}
 
 _scaleIng(text, p, base){
@@ -297,6 +322,8 @@ _del(n){this._svc("update_inventory",{name:n,action:"delete"});delete this.data.
 _saveEdit(item){const cat=this.shadowRoot.getElementById("ecat")?.value||"";const loc=this.shadowRoot.getElementById("eloc")?.value||"";const exp=this.shadowRoot.getElementById("eexp")?.value||"";const min=parseInt(this.shadowRoot.getElementById("emin")?.value||"0",10);
 this._svc("update_inventory",{name:item.name,quantity:item.quantity,last_price:item.last_price||0,unit:item.unit||"ks",image_url:item.image_url||"",store:item.store||"",category:cat,location:loc,expiry_date:exp,min_quantity:min});
 item.category=cat;item.location=loc;item.expiry_date=exp;item.min_quantity=min;this.editing="";this.requestUpdate();this._t("Uloženo");}
+_saveRec(r){this._svc("update_pending_receipt",{receipt_id:r.id,items:r.items,store:r.store});this.editingReceipt="";this._t("Uloženo");}
+_delRec(id){if(confirm("Smazat účtenku?")){this._svc("update_pending_receipt",{receipt_id:id,action:"delete"});delete this.data.pending_receipts[id];this.editingReceipt="";this.requestUpdate();}}
 _addRcp(){const i=this.shadowRoot.getElementById("rurl");if(!i)return;const u=i.value.trim();if(!u)return;this._svc("add_recipe",{url:u});i.value="";this._t("Stahuji recept…");setTimeout(()=>this._fetch(),5000);}
 }
 customElements.define("shopping-list-panel",ShoppingListPanel);
