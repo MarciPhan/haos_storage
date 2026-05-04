@@ -24,14 +24,20 @@ _SKIP_WORDS = frozenset([
 #  Helpers
 # ---------------------------------------------------------------------------
 
-def _prepare_image(image_path: str, max_size_kb: int = 1024) -> tuple[str, str]:
-    """Resize and compress image to stay under size limit. Returns (base64_data, mime_type)."""
+def _prepare_image(image_path: str, max_size_kb: int = 1000) -> tuple[str, str]:
+    """Compress image and encode to base64."""
+    try:
+        from PIL import Image, ImageOps
+    except ImportError:
+        _LOGGER.error("Pillow library is required for image compression.")
+        raise
+
     try:
         with Image.open(image_path) as img:
+            img = ImageOps.exif_transpose(img)
             # Convert to RGB if necessary (e.g. for PNG with transparency)
             if img.mode in ("RGBA", "P"):
                 img = img.convert("RGB")
-            
             # Resize if too large (standard receipts don't need 4K+)
             if max(img.size) > 2000:
                 img.thumbnail((2000, 2000), Image.LANCZOS)
@@ -110,16 +116,36 @@ Vrať pouze JSON, žádný jiný text. Ceny musí být čísla. Ignoruj slevy/vr
                 if resp.status != 200:
                     err = await resp.text()
                     _LOGGER.error("Gemini API error %d: %s", resp.status, err)
-                    return []
+                    return None
                 result = await resp.json()
                 text = result['candidates'][0]['content']['parts'][0]['text']
+                
+                # Očištění o případné markdown značky, které Gemini občas vrátí i přes application/json
+                text = text.strip()
+                if text.startswith("```json"): text = text[7:]
+                elif text.startswith("```"): text = text[3:]
+                if text.endswith("```"): text = text[:-3]
+                text = text.strip()
+                
                 data = json.loads(text)
                 if isinstance(data, dict):
+                    # Očištění čísel
+                    def parse_num(v, is_int=False):
+                        if v is None: return 0 if not is_int else 1
+                        v_str = str(v).replace(',', '.').strip()
+                        v_str = re.sub(r'[^\d.-]', '', v_str)
+                        try:
+                            return int(float(v_str)) if is_int else float(v_str)
+                        except ValueError:
+                            return 0 if not is_int else 1
+                            
+                    data["total"] = parse_num(data.get("total"))
+                    
                     items = data.get("items", [])
                     if isinstance(items, list):
                         for item in items:
-                            item["price"] = float(item.get("price", 0))
-                            item["quantity"] = int(item.get("quantity", 1))
+                            item["price"] = parse_num(item.get("price"), is_int=False)
+                            item["quantity"] = parse_num(item.get("quantity", 1), is_int=True)
                         data["items"] = items
                     return data
     except Exception as exc:
