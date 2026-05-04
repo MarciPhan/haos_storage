@@ -121,14 +121,24 @@ Důležité:
                     _LOGGER.error("Gemini API error %d: %s", resp.status, err)
                     return None
                 result = await resp.json()
-                text = result['candidates'][0]['content']['parts'][0]['text']
+                if 'candidates' not in result or not result['candidates']:
+                    _LOGGER.error("Gemini returned no candidates: %s", result)
+                    return None
                 
-                # Očištění o případné markdown značky, které Gemini občas vrátí i přes application/json
-                text = text.strip()
-                if text.startswith("```json"): text = text[7:]
-                elif text.startswith("```"): text = text[3:]
-                if text.endswith("```"): text = text[:-3]
-                text = text.strip()
+                content = result['candidates'][0].get('content', {})
+                if 'parts' not in content or not content['parts']:
+                    _LOGGER.error("Gemini returned empty parts: %s", result)
+                    return None
+                    
+                text = content['parts'][0].get('text', '')
+                
+                # Očištění o případné markdown značky nebo úvodní/závěrečný text
+                import re
+                match = re.search(r'\{.*\}', text, re.DOTALL)
+                if match:
+                    text = match.group(0)
+                else:
+                    text = text.strip()
                 
                 data = json.loads(text)
                 if isinstance(data, dict):
