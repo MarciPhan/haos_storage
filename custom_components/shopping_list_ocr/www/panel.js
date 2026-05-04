@@ -213,7 +213,9 @@ ${rr.map(r=>{
 const isEd=this.editingReceipt===r.id;
 const imgUrl=r.image_path?r.image_path.replace('/config/www/','/local/'):'';
 return html`
-<div class="c">${r.store?html`<span class="st">${r.store}</span>`:''}<div class="cb">
+<div class="c">
+  ${r.debug?html`<div style="color:var(--r);font-size:11px;white-space:pre-wrap;padding:8px;background:rgba(239,68,68,0.1);border-radius:4px;margin-bottom:8px">${r.debug}</div>`:''}
+  ${r.store?html`<span class="st">${r.store}</span>`:''}<div class="cb">
 <div class="cm" style="display:flex;justify-content:space-between">
   <span>${new Date(r.date).toLocaleString("cs")}</span>
   <div style="display:flex;gap:4px">
@@ -223,7 +225,6 @@ return html`
 </div>
 ${isEd?html`
 <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
-  ${r.debug?html`<div style="color:var(--r);font-size:11px;white-space:pre-wrap;padding:8px;background:rgba(239,68,68,0.1);border-radius:4px">${r.debug}</div>`:''}
   <input type="text" placeholder="Obchod" .value=${r.store||''} @input=${e=>r.store=e.target.value} style="padding:6px;border-radius:6px;background:rgba(255,255,255,0.05);border:1px solid var(--border);color:inherit">
   ${r.items.map((i,idx)=>html`
     <div class="edit-row">
