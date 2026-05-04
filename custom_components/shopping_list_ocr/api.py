@@ -266,3 +266,42 @@ async def fetch_product_by_ean(hass: HomeAssistant, ean: str) -> dict | None:
                     "brand": p.get("brands", ""),
                 }
     except: return None
+
+async def fetch_recipe_content(hass: HomeAssistant, url: str) -> dict | None:
+    \"\"\"Extract recipe ingredients and instructions from a URL.\"\"\"
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=15) as resp:
+                if resp.status != 200:
+                    return None
+                html = await resp.text()
+                
+                from bs4 import BeautifulSoup
+                soup = BeautifulSoup(html, 'html.parser')
+                
+                # Basic heuristic extraction
+                title = soup.find('h1').text.strip() if soup.find('h1') else "Recept"
+                
+                # Try to find ingredients
+                ingredients = []
+                for li in soup.find_all('li'):
+                    txt = li.text.strip()
+                    if len(txt) > 2 and len(txt) < 100:
+                        ingredients.append(txt)
+                
+                # Try to find instructions
+                instructions = ""
+                for p in soup.find_all(['p', 'div']):
+                    txt = p.text.strip()
+                    if len(txt) > 100:
+                        instructions += txt + "\n\n"
+                
+                return {
+                    "title": title,
+                    "ingredients": ingredients[:20],
+                    "instructions": instructions[:2000],
+                    "url": url
+                }
+    except Exception as exc:
+        _LOGGER.error("Failed to fetch recipe: %s", exc)
+        return None
