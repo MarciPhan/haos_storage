@@ -344,7 +344,7 @@ this._t("Chyba nahrávání fotky");
 setTimeout(()=>{this.uploadState="";this.uploadPreview="";this.uploadProgress=0;},5000);}
 if(el) el.value="";}
 
-_toggleScan(){this.scan=!this.scan;if(this.scan){if(!_scanOk){this._t("Skener se načítá…");this.scan=false;return;}setTimeout(()=>{try{this._sc=new Html5Qrcode("reader");this._sc.start({facingMode:"environment"},{fps:10,qrbox:{width:250,height:150}},(t)=>{this._toggleScan();this._addEanVal(t);}).catch(()=>{this._t("Kamera nedostupná");this.scan=false;});}catch(e){this.scan=false;}},400);}else if(this._sc){try{this._sc.stop();}catch(e){}this._sc=null;}}
+_toggleScan(){this.scan=!this.scan;if(this.scan){if(!_scanOk){this._t("Skener se načítá…");this.scan=false;return;}setTimeout(()=>{try{const el=this.shadowRoot.getElementById("reader");if(!el)return;this._sc=new Html5Qrcode(el);this._sc.start({facingMode:"environment"},{fps:10,qrbox:{width:250,height:150}},(t)=>{this._toggleScan();this._addEanVal(t);}).catch(()=>{this._t("Kamera nedostupná");this.scan=false;});}catch(e){this.scan=false;}},400);}else if(this._sc){try{this._sc.stop();}catch(e){}this._sc=null;}}
 
 _addEan(){const i=this.shadowRoot.getElementById("ean-in");if(!i)return;this._addEanVal(i.value.trim());i.value="";}
 _addEanVal(v){if(!v)return;this._svc("add_item_by_ean",{ean:v});this._t(`EAN: ${v}…`);setTimeout(()=>this._fetch(),2000);}
