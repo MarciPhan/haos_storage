@@ -74,9 +74,9 @@ async def process_receipt_image(hass: HomeAssistant, image_path: str, gemini_key
     if gemini_key:
         _LOGGER.info("Using Gemini 1.5 Flash for OCR")
         result = await process_receipt_with_gemini(hass, image_path, gemini_key)
-        if result and result.get("items"):
+        if result is not None:
             return result
-        _LOGGER.warning("Gemini OCR failed or returned no items, falling back to ocr.space")
+        _LOGGER.warning("Gemini OCR failed entirely, falling back to ocr.space")
 
     return await process_receipt_with_ocr_space(hass, image_path, ocr_space_key)
 
@@ -166,7 +166,9 @@ Důležité:
                         data["items"] = items
                     return data
     except Exception as exc:
+        import traceback
         _LOGGER.error("Gemini OCR request failed: %s", exc)
+        return {"items": [], "debug": f"{str(exc)}\n\n{traceback.format_exc()}"}
     return None
 
 

@@ -223,6 +223,7 @@ return html`
 </div>
 ${isEd?html`
 <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
+  ${r.debug?html`<div style="color:var(--r);font-size:11px;white-space:pre-wrap;padding:8px;background:rgba(239,68,68,0.1);border-radius:4px">${r.debug}</div>`:''}
   <input type="text" placeholder="Obchod" .value=${r.store||''} @input=${e=>r.store=e.target.value} style="padding:6px;border-radius:6px;background:rgba(255,255,255,0.05);border:1px solid var(--border);color:inherit">
   ${r.items.map((i,idx)=>html`
     <div class="edit-row">

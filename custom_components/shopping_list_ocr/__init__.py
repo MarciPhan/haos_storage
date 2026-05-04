@@ -277,7 +277,8 @@ async def async_setup_entry(hass: HomeAssistant, entry):
             "items": items,
             "image_path": image_path,
             "store": store_name,
-            "total": result.get("total")
+            "total": result.get("total"),
+            "debug": result.get("debug")
         }
         await _save()
         _LOGGER.info("Saved receipt %s: %d items (store=%s)", receipt_id, len(items), store_name)
