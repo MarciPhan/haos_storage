@@ -181,8 +181,8 @@ async def async_setup_entry(hass: HomeAssistant, entry):
     store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
     data = await store.async_load() or {}
     # Ensure all top-level keys exist
-    for key in ("inventory", "pending_receipts", "recipes", "keep_config", "consumption_log"):
-        data.setdefault(key, {} if key != "consumption_log" else [])
+    for key in ("inventory", "pending_receipts", "recipes", "keep_config", "consumption_log", "meal_plan"):
+        data.setdefault(key, {} if key not in ("consumption_log", "meal_plan") else [])
 
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = data
@@ -219,6 +219,38 @@ async def async_setup_entry(hass: HomeAssistant, entry):
     # -----------------------------------------------------------------------
     #  Services
     # -----------------------------------------------------------------------
+
+    async def handle_update_meal_plan(call: ServiceCall):
+        """Add, update or delete a meal in the meal plan."""
+        action = call.data.get("action", "add")
+        meal_id = call.data.get("id")
+        
+        if action == "delete" and meal_id:
+            data["meal_plan"] = [m for m in data["meal_plan"] if m.get("id") != meal_id]
+        else:
+            meal = {
+                "id": meal_id or str(uuid.uuid4()),
+                "date": call.data.get("date"),
+                "recipe_id": call.data.get("recipe_id"),
+                "portions": call.data.get("portions", 4),
+                "type": call.data.get("type", "Oběd"),
+            }
+            if not meal["date"] or not meal["recipe_id"]:
+                return
+            
+            if meal_id:
+                # Update existing
+                for i, m in enumerate(data["meal_plan"]):
+                    if m.get("id") == meal_id:
+                        data["meal_plan"][i] = meal
+                        break
+                else:
+                    data["meal_plan"].append(meal)
+            else:
+                # Add new
+                data["meal_plan"].append(meal)
+                
+        await _save()
 
     async def handle_scan_receipt(call: ServiceCall):
         """Scan a single receipt image via OCR."""
@@ -457,6 +489,7 @@ async def async_setup_entry(hass: HomeAssistant, entry):
     svc(DOMAIN, "update_inventory", handle_update_inventory)
     svc(DOMAIN, "add_item_by_ean", handle_add_item_by_ean)
     svc(DOMAIN, "add_recipe", handle_add_recipe)
+    svc(DOMAIN, "update_meal_plan", handle_update_meal_plan)
 
     hass.http.register_view(PanelJsView())
     hass.http.register_view(DataView(data))
