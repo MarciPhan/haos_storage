@@ -93,10 +93,13 @@ async def process_receipt_with_gemini(hass: HomeAssistant, image_path: str, api_
   "date": "Datum nákupu ve formátu YYYY-MM-DDTHH:MM:SS (pokud chybí, nech prázdné)",
   "total": 182.97,
   "items": [
-    {"name": "název produktu", "price": 12.90, "quantity": 1}
+    {"name": "název produktu", "price": 12.90, "quantity": 1, "expiry_days": 7}
   ]
 }
-Vrať pouze JSON, žádný jiný text. Ceny musí být čísla. Ignoruj slevy/vratky a nesmyslné texty jako patičky."""
+Důležité:
+- Vrať POUZE JSON, žádný jiný text.
+- U každé položky odhadni běžnou dobu trvanlivosti (expiry_days) ve dnech od nákupu (např. čerstvé pečivo 1, mléko 7, sýr 14, trvanlivé potraviny 180). Pokud nevíš, dej null.
+- Ceny a počty musí být čísla. Ignoruj slevy/vratky a nesmyslné texty."""
 
     payload = {
         "contents": [{
@@ -146,6 +149,10 @@ Vrať pouze JSON, žádný jiný text. Ceny musí být čísla. Ignoruj slevy/vr
                         for item in items:
                             item["price"] = parse_num(item.get("price"), is_int=False)
                             item["quantity"] = parse_num(item.get("quantity", 1), is_int=True)
+                            
+                            # Expiry days default
+                            exp = item.get("expiry_days")
+                            item["expiry_days"] = int(exp) if exp is not None else None
                         data["items"] = items
                     return data
     except Exception as exc:

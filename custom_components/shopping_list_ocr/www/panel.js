@@ -306,23 +306,18 @@ ${ings.map(i=>html`<div style="margin-bottom:4px">• ${i}</div>`)}
 
 // --- Actions ---
 async _upload(e){
-const f=e.target.files?.[0];if(!f)return;
-// Show preview
-this.uploadPreview=URL.createObjectURL(f);
-this.uploadState="uploading";this.uploadProgress=10;this.tab="receipts";
-const fd=new FormData();fd.append("file",f);
-// Animate upload progress
-const pInt=setInterval(()=>{if(this.uploadProgress<30)this.uploadProgress+=4;},200);
-try{
-const r=await this.hass.fetchWithAuth("/api/shopping_list/upload",{method:"POST",body:fd});
-clearInterval(pInt);
-if(r.ok){
+const el = e.target;
+const f=el?.files?.[0];if(!f)return;
+const u=URL.createObjectURL(f);this.uploadPreview=u;this.uploadState="uploading";this.uploadProgress=10;this.requestUpdate();
+try{const r=new FileReader();
+const b=await new Promise((res,rej)=>{r.onload=()=>res(r.result);r.onerror=rej;r.readAsDataURL(f);});
+const p=await this.hass.callApi("POST","shopping_list/upload",{"image":b});
 this.uploadState="processing";this.uploadProgress=40;
 // Animate OCR processing
 const oInt=setInterval(()=>{if(this.uploadProgress<85)this.uploadProgress+=3;},400);
 // Poll for new receipts (OCR is async on backend)
 const startCount=Object.keys(this.data.pending_receipts||{}).length;
-let attempts=0;const maxAttempts=20;
+let attempts=0;const maxAttempts=25;
 const poll=setInterval(async()=>{
 attempts++;
 await this._fetch();
@@ -330,15 +325,16 @@ const newCount=Object.keys(this.data.pending_receipts||{}).length;
 if(newCount>startCount||attempts>=maxAttempts){
 clearInterval(oInt);clearInterval(poll);
 if(newCount>startCount){this.uploadState="done";this.uploadProgress=100;
+this._t("Účtenka byla úspěšně načtena");
 setTimeout(()=>{this.uploadState="";this.uploadPreview="";this.uploadProgress=0;},4000);
 }else{this.uploadState="error";this.uploadProgress=100;
+this._t("OCR selhalo – zkuste to znovu");
 setTimeout(()=>{this.uploadState="";this.uploadPreview="";this.uploadProgress=0;},5000);
 }}},2000);
-}else{this.uploadState="error";this.uploadProgress=100;
+}catch(err){this.uploadState="error";this.uploadProgress=100;
+this._t("Chyba nahrávání");
 setTimeout(()=>{this.uploadState="";this.uploadPreview="";this.uploadProgress=0;},5000);}
-}catch(err){clearInterval(pInt);this.uploadState="error";this.uploadProgress=100;
-setTimeout(()=>{this.uploadState="";this.uploadPreview="";this.uploadProgress=0;},5000);}
-e.target.value="";}
+if(el) el.value="";}
 
 _toggleScan(){this.scan=!this.scan;if(this.scan){if(!_scanOk){this._t("Skener se načítá…");this.scan=false;return;}setTimeout(()=>{try{this._sc=new Html5Qrcode("reader");this._sc.start({facingMode:"environment"},{fps:10,qrbox:{width:250,height:150}},(t)=>{this._toggleScan();this._addEanVal(t);}).catch(()=>{this._t("Kamera nedostupná");this.scan=false;});}catch(e){this.scan=false;}},400);}else if(this._sc){try{this._sc.stop();}catch(e){}this._sc=null;}}
 

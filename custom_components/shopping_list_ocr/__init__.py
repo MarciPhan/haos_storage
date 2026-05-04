@@ -4,6 +4,7 @@ import logging
 import os
 import uuid
 import time
+from datetime import timedelta
 
 import aiohttp
 from homeassistant.core import HomeAssistant, ServiceCall
@@ -341,9 +342,22 @@ async def async_setup_entry(hass: HomeAssistant, entry):
             return
         for item in receipt["items"]:
             name = item["name"]
+            
+            exp_date_str = ""
+            if "expiry_days" in item and item["expiry_days"] is not None:
+                try:
+                    # Parse purchase date and add expiry_days
+                    rd = dt_util.parse_datetime(receipt.get("date", "")) or dt_util.now()
+                    rd = rd + timedelta(days=int(item["expiry_days"]))
+                    exp_date_str = rd.date().isoformat()
+                except Exception:
+                    pass
+
             if name in data["inventory"]:
                 data["inventory"][name]["quantity"] += item.get("quantity", 1)
                 data["inventory"][name]["last_price"] = item.get("price", 0)
+                if exp_date_str:
+                    data["inventory"][name]["expiry_date"] = exp_date_str
             else:
                 data["inventory"][name] = _make_item(
                     name,
@@ -352,6 +366,7 @@ async def async_setup_entry(hass: HomeAssistant, entry):
                     unit=item.get("unit", "ks"),
                     image_url=item.get("image_url", ""),
                     store=receipt.get("store", ""),
+                    expiry_date=exp_date_str,
                 )
         
         # Move to archive
