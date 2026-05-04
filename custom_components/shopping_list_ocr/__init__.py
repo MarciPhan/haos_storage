@@ -448,10 +448,10 @@ async def async_setup_entry(hass: HomeAssistant, entry):
             pdf.set_font(font_name, size=11)
             bullet = "\u2022" if font_name == "Roboto" else "-"
             for ing in recipe_data.get("ingredients", []):
-                pdf.set_x(10)
-                pdf.multi_cell(180, 7, txt=sanitize(f"  {bullet} {ing}"))
-            pdf.set_x(10)
-            pdf.ln(6)
+                pdf.set_x(15)
+                pdf.multi_cell(175, 6, txt=sanitize(f"{bullet} {ing}"))
+                pdf.ln(1)
+            pdf.ln(4)
 
             # Instructions
             pdf.set_font(font_name, size=14)

@@ -5,8 +5,8 @@ const CATS=["","Ovoce a zelenina","Mléčné výrobky","Maso a ryby","Pečivo","
 const LOCS=["","Lednice","Mrazák","Spíž","Skříňka","Koupelna"];
 
 class ShoppingListPanel extends LitElement{
-static get properties(){return{hass:{type:Object},data:{type:Object},tab:{type:String},scan:{type:Boolean},search:{type:String},filterCat:{type:String},filterLoc:{type:String},editing:{type:String},toast:{type:String},uploadState:{type:String},uploadPreview:{type:String},uploadProgress:{type:Number},recipePortions:{type:Object}};}
-constructor(){super();this.data={inventory:{},pending_receipts:{},recipes:{},consumption_log:[]};this.tab="dashboard";this.scan=false;this.search="";this.filterCat="";this.filterLoc="";this.editing="";this.toast="";this._sc=null;this.uploadState="";this.uploadPreview="";this.uploadProgress=0;this.recipePortions={};}
+static get properties(){return{hass:{type:Object},data:{type:Object},tab:{type:String},scan:{type:Boolean},search:{type:String},filterCat:{type:String},filterLoc:{type:String},editing:{type:String},toast:{type:String},uploadState:{type:String},uploadPreview:{type:String},uploadProgress:{type:Number},recipePortions:{type:Object},copyModalText:{type:String}};}
+constructor(){super();this.data={inventory:{},pending_receipts:{},recipes:{},consumption_log:[]};this.tab="dashboard";this.scan=false;this.search="";this.filterCat="";this.filterLoc="";this.editing="";this.toast="";this._sc=null;this.uploadState="";this.uploadPreview="";this.uploadProgress=0;this.recipePortions={};this.copyModalText="";}
 connectedCallback(){super.connectedCallback();this._fetch();this.hass?.connection?.subscribeEvents(()=>this._fetch(),"shopping_list_ocr_updated");}
 async _fetch(){if(!this.hass)return;try{const r=await this.hass.fetchWithAuth("/api/shopping_list/data");if(r.ok)this.data=await r.json();}catch(e){}}
 _t(m){this.toast=m;setTimeout(()=>{this.toast=""},3500);}
@@ -90,6 +90,7 @@ ${this.tab==='inventory'?this._inv(inv):''}
 ${this.tab==='receipts'?this._rec():''}
 ${this.tab==='recipes'?this._rcp():''}
 ${this.scan?html`<div class="modal"><div id="reader"></div><button class="btn bo" style="margin-top:16px" @click=${this._toggleScan}>Zavřít</button></div>`:''}
+${this.copyModalText?html`<div class="modal" @click=${()=>this.copyModalText=""}><div class="c" style="width:100%;max-width:500px;padding:20px" @click=${e=>e.stopPropagation()}><h3 style="margin-top:0">Ingredience do nákupu</h3><p class="cm">Zkopírujte si seznam do nákupní aplikace:</p><textarea style="width:100%;height:300px;background:rgba(0,0,0,0.2);color:inherit;border:1px solid var(--border);border-radius:8px;padding:10px;font-family:monospace;font-size:0.9rem" readonly>${this.copyModalText}</textarea><button class="btn bp bw" style="margin-top:16px" @click=${()=>this.copyModalText=""}>Zavřít</button></div></div>`:''}
 ${this.toast?html`<div class="toast">${this.toast}</div>`:''}
 </div>`;}
 
@@ -246,7 +247,7 @@ ${ings.map(i=>html`<div style="margin-bottom:4px">• ${i}</div>`)}
 </div>
 <div style="display:flex;gap:6px;margin-top:auto">
 <a href="${r.pdf_url}" target="_blank" class="btn bo" style="text-decoration:none;flex:1">PDF</a>
-<button class="btn bp" style="flex:2" @click=${()=>{ings.forEach(i=>this.hass.callService("shopping_list","add_item",{name:i}));this._t("Přidáno do nákupu");}}>Do nákupu</button>
+<button class="btn bp" style="flex:2" @click=${()=>{this.copyModalText=ings.join('\n');}}>Do nákupu</button>
 </div>
 </div></div>`})}</div>`}
 </section>`;}

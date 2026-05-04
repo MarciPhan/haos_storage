@@ -251,11 +251,28 @@ async def fetch_recipe_content(hass: HomeAssistant, url: str) -> dict | None:
         if inst:
             recipe["instructions"] = inst.get_text(strip=True)
 
+    elif "madebykristina.cz" in domain:
+        for el in soup.select(".suroviny-kika-obsah li"):
+            recipe["ingredients"].append(el.get_text(strip=True))
+        inst = soup.select_one(".postup-kika-obsah")
+        if inst:
+            recipe["instructions"] = inst.get_text(strip=True)
+
     # --- Fallback: generic extraction ---
+    if not recipe["ingredients"]:
+        for h in soup.find_all(["h2", "h3", "h4", "strong"]):
+            htxt = h.get_text().lower()
+            if "suroviny" in htxt or "ingredience" in htxt:
+                nxt = h.find_next(["ul", "ol"])
+                if nxt:
+                    for li in nxt.find_all("li"):
+                        recipe["ingredients"].append(li.get_text(strip=True))
+                if recipe["ingredients"]: break
+
     if not recipe["ingredients"]:
         for li in soup.find_all("li"):
             txt = li.get_text(strip=True)
-            if txt and re.match(r"^\d", txt) and len(txt) < 200:
+            if txt and re.match(r"^\d", txt) and len(txt) < 150:
                 recipe["ingredients"].append(txt)
 
     if not recipe["instructions"]:
