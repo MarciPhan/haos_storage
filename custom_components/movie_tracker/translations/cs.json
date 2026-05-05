@@ -1,0 +1,17 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Nastavení Filmotéky",
+        "description": "Chcete aktivovat integraci Filmotéka?",
+        "data": {
+          "tmdb_api_key": "TMDb API Klíč (volitelný - pro načítání epizod a plakátů)"
+        }
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Je povolena pouze jedna instance této integrace."
+    }
+  },
+  "title": "Filmotéka"
+}

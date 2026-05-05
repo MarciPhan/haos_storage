@@ -1,0 +1,39 @@
+movie_action:
+  name: Movie Action
+  description: Provede akci s filmem (shlédnuto, wishlist, smazání).
+  fields:
+    action:
+      name: Akce
+      description: Typ akce (watch, wishlist, delete_watched, delete_wishlist, mark_episode).
+      required: true
+      example: watch
+      selector:
+        select:
+          options:
+            - watch
+            - wishlist
+            - delete_watched
+            - delete_wishlist
+            - mark_episode
+            - update_settings
+    movie:
+      name: Film
+      description: Data o filmu v JSON formátu.
+      required: true
+      example: '{"id": "123", "title": "Matrix"}'
+      selector:
+        object:
+    episode_url:
+      name: URL Epizody
+      description: URL konkrétní epizody pro označení jako shlédnuté.
+      required: false
+      example: "https://..."
+      selector:
+        text:
+    settings:
+      name: Nastavení
+      description: Nastavení pro aktualizaci (např. jazyk).
+      required: false
+      example: '{"language": "CZ"}'
+      selector:
+        object:
