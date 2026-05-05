@@ -13,5 +13,15 @@
       "single_instance_allowed": "Je povolena pouze jedna instance této integrace."
     }
   },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Nastavení Filmotéky",
+        "data": {
+          "tmdb_api_key": "TMDb API Klíč"
+        }
+      }
+    }
+  },
   "title": "Filmotéka"
 }
