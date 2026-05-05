@@ -123,37 +123,6 @@ class DetailView(HomeAssistantView):
             _LOGGER.error("Error in DetailView: %s", e, exc_info=True)
             return web.json_response({"error": str(e)}, status=500)
 
-_STATIC_REGISTERED = False
-
-async def async_setup(hass: HomeAssistant, config: dict):
-    return True
-
-async def async_setup_entry(hass: HomeAssistant, entry):
-    """Set up Movie Tracker from a config entry."""
-    global _STATIC_REGISTERED
-    try:
-        store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
-        data = await store.async_load() or {}
-        
-        # Ensure structure
-        data.setdefault("watched", {})
-        data.setdefault("wishlist", {})
-        data.setdefault("settings", {"language": "CZ"})
-        
-        tmdb_key = entry.data.get("tmdb_api_key", "")
-        
-        async def _save():
-            await store.async_save(data)
-            hass.bus.async_fire(EVENT_MOVIES_UPDATED)
-
-        # Store data for views
-        hass.data.setdefault(DOMAIN, {})
-        hass.data[DOMAIN][entry.entry_id] = {
-            "data": data,
-            "tmdb_key": tmdb_key,
-            "store": store
-        }
-
 # --- HTTP Views ---
 class MovieTrackerPanelJsView(HomeAssistantView):
     """Serve the frontend panel JavaScript."""
@@ -167,6 +136,30 @@ class MovieTrackerPanelJsView(HomeAssistantView):
         if not os.path.isfile(path):
             return web.Response(status=404, text="panel.js not found")
         return web.FileResponse(path, headers={"Cache-Control": "no-cache"})
+
+async def async_setup(hass: HomeAssistant, config: dict):
+    return True
+
+async def async_setup_entry(hass: HomeAssistant, entry):
+    """Set up Movie Tracker from a config entry."""
+    try:
+        store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
+        data = await store.async_load() or {}
+        
+        # Ensure structure
+        data.setdefault("watched", {})
+        data.setdefault("wishlist", {})
+        data.setdefault("settings", {"language": "CZ"})
+        
+        tmdb_key = entry.data.get("tmdb_api_key", "")
+        
+        # Store data for views
+        hass.data.setdefault(DOMAIN, {})
+        hass.data[DOMAIN][entry.entry_id] = {
+            "data": data,
+            "tmdb_key": tmdb_key,
+            "store": store
+        }
 
         # Register views
         views = [
