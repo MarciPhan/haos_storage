@@ -79,7 +79,7 @@ class ProxyImageView(HomeAssistantView):
                         content = await resp.read()
                         def save_file():
                             with open(cache_path, "wb") as f: f.write(content)
-                        await self.hass.async_add_executor_job(save_file)
+                        await request.app["hass"].async_add_executor_job(save_file)
                         return web.Response(body=content, content_type=resp.content_type)
         except Exception as e: _LOGGER.error("Proxy image failed: %s", e)
         return web.Response(status=404)
@@ -113,7 +113,7 @@ class DetailView(HomeAssistantView):
         if not movie_id and not title: return web.json_response({"error": "Missing ID or Title"}, status=400)
         try:
             from .api import get_details, get_hellspy_video_url
-            details = await get_details(title, tmdb_api_key=self._tmdb_key)
+            details = await get_details(title, movie_id=movie_id, tmdb_api_key=self._tmdb_key)
             if details:
                 lang = self._data.get("settings", {}).get("language", "CZ")
                 query_text = details.get("title", title)
