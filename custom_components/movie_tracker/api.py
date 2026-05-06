@@ -91,7 +91,7 @@ class SerialZoneScraper:
             _LOGGER.warning("SerialZone scrape failed: %s", e)
             return []
 
-async def get_details(title: str, is_series: bool = False, tmdb_api_key: str = None) -> dict:
+async def get_details(title: str, is_series: bool = False, tmdb_api_key: str = None, movie_id: str = None) -> dict:
     """Fetch movie/series details from multiple sources."""
     details = {
         "title": title,
@@ -108,91 +108,77 @@ async def get_details(title: str, is_series: bool = False, tmdb_api_key: str = N
 
     async with aiohttp.ClientSession() as session:
         try:
-            # Priority 1: CZDB (for local relevance)
+            tmdb_id = None
+            if movie_id and movie_id.startswith("tmdb_"):
+                tmdb_id = movie_id.replace("tmdb_", "")
+
+            # 1. Try TMDb first for robust metadata and poster
+            q_type = "tv" if is_series else "movie"
+            
+            # If we have tmdb_id, we can skip search
+            if not tmdb_id:
+                s_url = f"https://api.themoviedb.org/3/search/{q_type}?api_key={tmdb_api_key}&query={urllib.parse.quote(title)}&language=cs-CZ"
+                async with session.get(s_url, timeout=5) as s_resp:
+                    if s_resp.status == 200:
+                        s_data = await s_resp.json()
+                        if s_data.get("results"):
+                            tmdb_id = s_data["results"][0]["id"]
+
+            if tmdb_id:
+                d_url = f"https://api.themoviedb.org/3/{q_type}/{tmdb_id}?api_key={tmdb_api_key}&language=cs-CZ"
+                async with session.get(d_url, timeout=5) as d_resp:
+                    if d_resp.status == 200:
+                        d_data = await d_resp.json()
+                        details.update({
+                            "title": d_data.get("title") or d_data.get("name") or title,
+                            "year": (d_data.get("release_date") or d_data.get("first_air_date") or "")[:4],
+                            "description": d_data.get("overview", ""),
+                            "rating": f"{int(d_data.get('vote_average', 0) * 10)}%" if d_data.get('vote_average') else ""
+                        })
+                        if d_data.get("poster_path"):
+                            details["poster"] = f"https://image.tmdb.org/t/p/w780{d_data['poster_path']}"
+                        
+                        if d_data.get("genres"):
+                            details["genres"] = [g["name"] for g in d_data["genres"]]
+                        if d_data.get("production_countries"):
+                            details["origin"] = ", ".join([c["name"] for c in d_data["production_countries"]])
+                        
+                        if is_series:
+                            for season in d_data.get("seasons", []):
+                                s_num = season.get("season_number")
+                                if s_num == 0: continue
+                                
+                                e_url = f"https://api.themoviedb.org/3/tv/{tmdb_id}/season/{s_num}?api_key={tmdb_api_key}&language=cs-CZ"
+                                async with session.get(e_url, timeout=5) as e_resp:
+                                    if e_resp.status == 200:
+                                        e_data = await e_resp.json()
+                                        season_info = {"name": season.get("name") or f"{s_num}. řada", "episodes": []}
+                                        for ep in e_data.get("episodes", []):
+                                            season_info["episodes"].append({
+                                                "title": ep.get("name"),
+                                                "number": ep.get("episode_number"),
+                                                "overview": ep.get("overview"),
+                                                "id": f"s{s_num}e{ep.get('episode_number')}"
+                                            })
+                                        details["seasons"].append(season_info)
+
+            # 2. Try CZDB for localized Czech rating and better description
             czdb_url = f"{CZDB_BASE_URL}/search?q={urllib.parse.quote(title)}"
             async with session.get(czdb_url, timeout=5) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     if data:
-                        # Find best match
                         item = data[0]
-                        details.update({
-                            "title": item.get("title", title),
-                            "rating": item.get("rating", ""),
-                            "year": item.get("year", ""),
-                            "description": item.get("description", ""),
-                            "origin": item.get("origin", ""),
-                        })
-                        if item.get("genres"):
-                            details["genres"] = item["genres"]
-                        
-                        # Get TMDb posters and seasons if possible
-                        tmdb_id = None
-                        q_type = "tv" if is_series else "movie"
-                        s_url = f"https://api.themoviedb.org/3/search/{q_type}?api_key={tmdb_api_key}&query={urllib.parse.quote(title)}&language=cs-CZ"
-                        async with session.get(s_url, timeout=5) as s_resp:
-                            if s_resp.status == 200:
-                                s_data = await s_resp.json()
-                                if s_data.get("results"):
-                                    tmdb_id = s_data["results"][0]["id"]
-                                    d_url = f"https://api.themoviedb.org/3/{q_type}/{tmdb_id}?api_key={tmdb_api_key}&language=cs-CZ"
-                                    async with session.get(d_url, timeout=5) as d_resp:
-                                        if d_resp.status == 200:
-                                            d_data = await d_resp.json()
-                                            if d_data.get("poster_path"):
-                                                details["poster"] = f"https://image.tmdb.org/t/p/w780{d_data['poster_path']}"
-                                            
-                                            for season in d_data.get("seasons", []):
-                                                s_num = season.get("season_number")
-                                                if s_num == 0: continue # Skip specials
-                                                
-                                                # Get episodes for this season
-                                                e_url = f"https://api.themoviedb.org/3/tv/{tmdb_id}/season/{s_num}?api_key={tmdb_api_key}&language=cs-CZ"
-                                                async with session.get(e_url, timeout=5) as e_resp:
-                                                    if e_resp.status == 200:
-                                                        e_data = await e_resp.json()
-                                                        season_info = {
-                                                            "name": season.get("name") or f"{s_num}. řada",
-                                                            "episodes": []
-                                                        }
-                                                        # Prepare tasks for direct Hellspy links for episodes
-                                                        ep_tasks = []
-                                                        for ep in e_data.get("episodes", []):
-                                                            ep_num = ep.get("episode_number")
-                                                            h_query = f"{details['title']} S{str(s_num).zfill(2)}E{str(ep_num).zfill(2)} cz dabing"
-                                                            ep_tasks.append((ep, h_query))
-                                                        
-                                                        sem = asyncio.Semaphore(2)
-                                                        async def get_direct_ep(e, q):
-                                                            async with sem:
-                                                                await asyncio.sleep(0.5)
-                                                                return e, await get_hellspy_video_url(q, "CZ")
-                                                        
-                                                        ep_results = await asyncio.gather(*[get_direct_ep(e, q) for e, q in ep_tasks])
-                                                        for ep, h_url in ep_results:
-                                                            season_info["episodes"].append({
-                                                                "title": ep.get("name"),
-                                                                "number": ep.get("episode_number"),
-                                                                "overview": ep.get("overview"),
-                                                                "url": h_url,
-                                                                "id": f"s{s_num}e{ep.get('episode_number')}"
-                                                            })
-                                                        details["seasons"].append(season_info)
-                        
-                        # Smarter hellspy_url for series: go to S01E01 by default
-                        if is_series and details.get("seasons"):
-                            first_s = details["seasons"][0]
-                            if first_s.get("episodes"):
-                                ep1 = first_s["episodes"][0]
-                                s_num = first_s.get("number") or 1
-                                ep_num = ep1.get("number") or 1
-                                q = f"{details['title']} S{str(s_num).zfill(2)}E{str(ep_num).zfill(2)} cz dabing"
-                                details["hellspy_url"] = await get_hellspy_video_url(q, "CZ")
+                        if item.get("rating"): details["rating"] = item["rating"]
+                        if item.get("description"): details["description"] = item["description"]
+                        if item.get("genres"): details["genres"] = item["genres"]
+                        if item.get("origin"): details["origin"] = item["origin"]
 
-                        return details
+            return details
         except Exception as e:
             _LOGGER.error("Fetch failed: %s", e)
-            return {}
+            return details
+
     return details
 
 async def get_hellspy_video_url(title: str, language: str = "CZ") -> str:
@@ -347,7 +333,7 @@ async def get_recommendations(watched_data: dict, wishlist_data: dict, tmdb_api_
                                 "year": (item.get("release_date") or item.get("first_air_date") or "N/A")[:4],
                                 "rating": f"{int(item.get('vote_average', 0) * 10)}%",
                                 "poster": poster,
-                                "type": item.get("media_type", "movie"),
+                                "type": "series" if item.get("media_type") == "tv" else "movie",
                                 "description": item.get("overview", "")
                             })
             except: pass
@@ -360,6 +346,18 @@ async def get_recommendations(watched_data: dict, wishlist_data: dict, tmdb_api_
             unique_recs.append(r)
             seen_ids.add(r["id"])
     return unique_recs[:15]
+
+class CSFDScraper:
+    """Compatibility class for older versions that used CSFDScraper."""
+    @staticmethod
+    async def search(query, tmdb_api_key=None):
+        return await search_movies(query, tmdb_api_key)
+    
+    @staticmethod
+    async def get_details(movie_id, title=None, tmdb_api_key=None):
+        # Handle cases where movie_id was passed as the first argument
+        search_title = title if title else movie_id
+        return await get_details(search_title, tmdb_api_key=tmdb_api_key)
 
 class CSFDScraper:
     """Compatibility class for older versions that used CSFDScraper."""
