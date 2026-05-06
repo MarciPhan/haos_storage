@@ -360,3 +360,15 @@ async def get_recommendations(watched_data: dict, wishlist_data: dict, tmdb_api_
             unique_recs.append(r)
             seen_ids.add(r["id"])
     return unique_recs[:15]
+
+class CSFDScraper:
+    """Compatibility class for older versions that used CSFDScraper."""
+    @staticmethod
+    async def search(query, tmdb_api_key=None):
+        return await search_movies(query, tmdb_api_key)
+    
+    @staticmethod
+    async def get_details(movie_id, title=None, tmdb_api_key=None):
+        # Handle cases where movie_id was passed as the first argument
+        search_title = title if title else movie_id
+        return await get_details(search_title, tmdb_api_key=tmdb_api_key)
